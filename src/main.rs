@@ -34,12 +34,26 @@
 #![allow(elided_lifetimes_in_paths)]
 
 use bevy::{prelude::*, window::WindowResolution};
+use bevy_asset_loader::prelude::*;
+use iyes_progress::prelude::*;
+
+#[derive(States, Default, Copy, Clone, Eq, PartialEq, Debug, Hash)]
+enum GameState {
+    #[default]
+    Loading,
+    Setup,
+    Playing,
+}
 
 fn main() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
     let mut app = App::default();
+
+    let loading_game_state = GameState::Loading;
+    let loading_state = LoadingState::new(loading_game_state);
+    let loading_plugin = ProgressPlugin::new(loading_game_state).continue_to(GameState::Setup);
 
     app.add_plugins((
         DefaultPlugins
@@ -58,10 +72,13 @@ fn main() {
             })
             // Fix sprite blur
             .set(ImagePlugin::default_nearest()),
-        //   loading_plugin,
+            loading_plugin,
         //  InputManagerPlugin::<Action>::default(),
         //  PhysicsPlugins::default(),
     ))
+    .add_loading_state(loading_state)
+    .add_collection_to_loading_state::<_, LDAssets>(loading_game_state)
+    .add_state::<GameState>()
     .insert_resource(Msaa::Off)
     .insert_resource(ClearColor(Color::hex("#000000").unwrap()))
     .add_systems(Update, bevy::window::close_on_esc)
@@ -73,4 +90,17 @@ fn something(k: Res<Input<KeyCode>>) {
     if k.just_pressed(KeyCode::J) {
         info!("Hohoho");
     }
+}
+
+#[derive(AssetCollection, Resource)]
+struct LDAssets {
+    #[asset(texture_atlas(tile_size_x = 18., tile_size_y = 18., columns = 6, rows = 1))]
+    #[asset(path = "player.png")]
+    player: Handle<TextureAtlas>,
+
+    #[asset(path = "gamebg.png")]
+    gamebg: Handle<Image>,
+
+    #[asset(path = "splash.png")]
+    splash: Handle<Image>,
 }
