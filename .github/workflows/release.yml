@@ -45,15 +45,15 @@ jobs:
 
           trunk build --release
 
-          sed -i 's|"/gbj|"./gbj|g' dist/index.html
+          sed -i 's|"/ld54|"./ld54|g' dist/index.html
 
           touch dist/.nojekyll
 
-          mv dist gbj-${tag}
+          mv dist ld54-${tag}
 
-          zip -r gbj-${tag}.zip gbj-${tag}
+          zip -r ld54-${tag}.zip ld54-${tag}
 
-          gh release upload ${tag} gbj-${tag}.zip
+          gh release upload ${tag} ld54-${tag}.zip
 
           gh release edit ${tag} --draft=false
 
@@ -63,7 +63,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v2
         with:
-          path: gbj-${{ github.run_number }}
+          path: ld54-${{ github.run_number }}
 
       - name: Deploy to GitHub Pages
         id: deployment
