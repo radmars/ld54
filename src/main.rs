@@ -134,8 +134,29 @@ fn playing_setup(assets: Res<LDAssets>, mut commands: Commands) {
         texture: assets.gamebg.clone(),
         ..default()
     });
-    // commands.spawn(SpriteBundle {
-    //     texture: assets.player.clone(),
-    //     ..default()
-    // });
+
+    let pb = PlayerBundle {
+        sprite: SpriteSheetBundle {
+            texture_atlas: assets.player.clone(),
+            sprite: TextureAtlasSprite {
+                index: 0,
+                ..default()
+            },
+            transform: Transform::from_translation(Vec3::new(1.0, 2.0, 1.0)),
+            ..default()
+        },
+        ..default()
+    };
+    commands.spawn(pb);
+}
+
+#[derive(Component, Default)]
+struct Player {
+}
+
+#[derive(Bundle, Default)]
+struct PlayerBundle{
+    player: Player,
+    #[bundle()]
+    sprite: SpriteSheetBundle,
 }
