@@ -36,6 +36,27 @@
 use bevy::{prelude::*, window::WindowResolution};
 use bevy_asset_loader::prelude::*;
 use iyes_progress::prelude::*;
+use leafwing_input_manager::{prelude::*, axislike::VirtualAxis};
+use rand::prelude::*;
+
+const PLAYER_X_SPEED: f32 = 400.0;
+
+const PADDLE_SIZE: Vec3 = Vec3::new(100.0, 20.0, 0.0);
+
+const LEFT_WALL: f32 = -400.0;
+const RIGHT_WALL: f32 = 400.0;
+const BOTTOM_WALL: f32 = -300.0;
+const TOP_WALL: f32 = 300.0;
+
+const ROCK_WIDTH: f32 = 64.0;
+const ROCK_HEIGHT: f32 = 52.0;
+
+const GAP_BETWEEN_PADDLE_AND_TOP: f32 = 60.0;
+
+const GAP_BETWEEN_ROCKS: f32 = 6.0;
+const GAP_BETWEEN_ROCKS_AND_BOTTOM: f32 = 30.0;
+const GAP_BETWEEN_ROCKS_AND_SIDES: f32 = 30.0;
+const GAP_BETWEEN_ROCKS_AND_PADDLE: f32 = 200.0;
 
 #[derive(States, Default, Copy, Clone, Eq, PartialEq, Debug, Hash)]
 enum GameState {
@@ -74,7 +95,7 @@ fn main() {
             // Fix sprite blur
             .set(ImagePlugin::default_nearest()),
         loading_plugin,
-        //  InputManagerPlugin::<Action>::default(),
+        InputManagerPlugin::<Action>::default(),
         //  PhysicsPlugins::default(),
     ))
     .add_loading_state(loading_state)
@@ -82,13 +103,34 @@ fn main() {
     .add_state::<GameState>()
     .insert_resource(Msaa::Off)
     .insert_resource(ClearColor(Color::hex("#000000").unwrap()))
+    .insert_resource(Randomizer::default())
     .add_systems(Update, bevy::window::close_on_esc)
     .add_systems(Update, (wait_to_start).run_if(in_state(GameState::Splash)))
     .add_systems(OnEnter(GameState::Setup), setup)
     .add_systems(OnEnter(GameState::Splash), splash_setup)
     .add_systems(OnExit(GameState::Splash), splash_exit)
     .add_systems(OnEnter(GameState::Playing), playing_setup)
+    .add_systems(
+        Update,
+        (
+            player_inputs,
+        )
+        .run_if(in_state(GameState::Playing))
+    )
     .run();
+}
+
+#[derive(Resource)]
+struct Randomizer {
+    rng: SmallRng,
+}
+
+impl Default for Randomizer {
+    fn default() -> Self {
+        Randomizer {
+            rng: SmallRng::from_entropy(),
+        }
+    }
 }
 
 #[derive(AssetCollection, Resource)]
@@ -96,6 +138,10 @@ struct LDAssets {
     #[asset(texture_atlas(tile_size_x = 18., tile_size_y = 18., columns = 6, rows = 1))]
     #[asset(path = "player.png")]
     player: Handle<TextureAtlas>,
+
+    #[asset(texture_atlas(tile_size_x = 64.0, tile_size_y = 64.0, columns = 1, rows = 2))]
+    #[asset(path = "rocks.png")]
+    rocks: Handle<TextureAtlas>,
 
     #[asset(path = "gamebg.png")]
     gamebg: Handle<Image>,
@@ -129,7 +175,9 @@ fn wait_to_start(k: Res<Input<KeyCode>>, mut next_state: ResMut<NextState<GameSt
     }
 }
 
-fn playing_setup(assets: Res<LDAssets>, mut commands: Commands) {
+fn playing_setup(assets: Res<LDAssets>, mut rng: ResMut<Randomizer>, mut commands: Commands) {
+    let paddle_y = TOP_WALL - GAP_BETWEEN_PADDLE_AND_TOP - PADDLE_SIZE.y;
+
     commands.spawn(SpriteBundle {
         texture: assets.gamebg.clone(),
         ..default()
@@ -145,9 +193,71 @@ fn playing_setup(assets: Res<LDAssets>, mut commands: Commands) {
             transform: Transform::from_translation(Vec3::new(1.0, 2.0, 1.0)),
             ..default()
         },
+        input_manager: InputManagerBundle::<Action> {
+            input_map: player_input_map(),
+            ..default()
+        },
         ..default()
     };
     commands.spawn(pb);
+
+    // Spawn as many rocks as we can given the boundaries defined by the constants
+    let total_width_of_rocks = (RIGHT_WALL - LEFT_WALL) - 2. * GAP_BETWEEN_ROCKS_AND_SIDES;
+    let top_edge_of_rocks = paddle_y - GAP_BETWEEN_ROCKS_AND_PADDLE;
+    let bottom_edge_of_rocks = BOTTOM_WALL + GAP_BETWEEN_ROCKS_AND_BOTTOM;
+    let total_height_of_rocks = top_edge_of_rocks - bottom_edge_of_rocks;
+
+    assert!(total_width_of_rocks > 0.0);
+    assert!(total_height_of_rocks > 0.0);
+
+    // Given the space available, compute how many rows and columns of bricks we can fit
+    let n_columns = (total_width_of_rocks / (ROCK_WIDTH + GAP_BETWEEN_ROCKS)).floor() as usize;
+    let n_rows = (total_height_of_rocks / (ROCK_HEIGHT + GAP_BETWEEN_ROCKS)).floor() as usize;
+    let n_vertical_gaps = n_columns - 1;
+
+    // Because we need to round the number of columns,
+    // the space on the top and sides of the rocks only captures a lower bound, not an exact value
+    let center_of_rocks = (LEFT_WALL + RIGHT_WALL) / 2.0;
+    let left_edge_of_rocks = center_of_rocks
+        // Space taken up by the bricks
+        - (n_columns as f32 / 2.0 * ROCK_WIDTH)
+        // Space taken up by the gaps
+        - n_vertical_gaps as f32 / 2.0 * GAP_BETWEEN_ROCKS;
+
+    // In Bevy, the `translation` of an entity describes the center point,
+    // not its bottom-left corner
+    let offset_x = left_edge_of_rocks + ROCK_WIDTH / 2.0;
+    let offset_y = bottom_edge_of_rocks + ROCK_HEIGHT / 2.0;
+
+    let image_indices: [usize; 2] = [0, 1];
+
+    for row in 0..n_rows {
+        for column in 0..n_columns {
+            let rock_position = Vec2::new(
+                offset_x + column as f32 * (ROCK_WIDTH + GAP_BETWEEN_ROCKS),
+                offset_y + row as f32 * (ROCK_HEIGHT + GAP_BETWEEN_ROCKS),
+            );
+
+            let image_index = image_indices.choose(&mut rng.rng).unwrap();
+
+            // brick
+            commands.spawn(RockBundle {
+                sprite: SpriteSheetBundle {
+                    texture_atlas: assets.rocks.clone(),
+                    sprite: TextureAtlasSprite {
+                        index: *image_index,
+                        ..default()
+                    },
+                    transform: Transform {
+                        translation: rock_position.extend(0.0),
+                        ..default()
+                    },
+                    ..default()
+                },
+                ..default()
+            });
+        }
+    }
 }
 
 #[derive(Component, Default)]
@@ -158,5 +268,62 @@ struct Player {
 struct PlayerBundle{
     player: Player,
     #[bundle()]
+    input_manager: InputManagerBundle<Action>,
+    #[bundle()]
     sprite: SpriteSheetBundle,
+}
+
+#[derive(Component, Default)]
+struct Rock {    
+}
+
+#[derive(Bundle, Default)]
+struct RockBundle{
+    rock: Rock,
+    #[bundle()]
+    sprite: SpriteSheetBundle,
+}
+
+#[derive(Actionlike, PartialEq, Eq, Clone, Copy, Hash, Debug, Reflect)]
+enum Action {
+    Move,
+    Jump,
+}
+
+fn player_input_map() -> InputMap<Action> {
+    let mut input_map = InputMap::default();
+    input_map.insert(
+        UserInput::VirtualAxis(VirtualAxis { 
+            negative: KeyCode::Left.into(),
+            positive: KeyCode::Right.into(),
+        }),
+        Action::Move,
+    );
+    input_map.insert(KeyCode::Up, Action::Jump);
+    input_map
+}
+
+fn player_inputs(
+    mut player_query: Query<
+        (
+            &mut Transform,
+            &ActionState<Action>,
+        ),
+        With<Player>,
+    >,
+    time: Res<Time>,
+) {
+    let Ok((mut transform, action_state)) = player_query.get_single_mut() else {
+        return;
+    };
+
+    if action_state.pressed(Action::Move) {
+        let x_amount = action_state.clamped_value(Action::Move);
+
+        transform.translation += Vec3::new(PLAYER_X_SPEED * x_amount * time.delta_seconds(), 0.0, 0.0);
+    }
+
+    if action_state.pressed(Action::Jump) {
+        transform.translation += Vec3::new(0.0, 20. * time.delta_seconds(), 0.0);
+    }
 }

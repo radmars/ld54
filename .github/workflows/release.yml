@@ -45,7 +45,7 @@ jobs:
 
           trunk build --release
 
-          sed -i 's|"/ld54|"./ld54|g' dist/index.html
+          sed -i 's|/ld54-|./ld54-|g' dist/index.html
 
           touch dist/.nojekyll
 

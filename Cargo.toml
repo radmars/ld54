@@ -6,8 +6,11 @@ edition = "2021"
 [dependencies]
 console_error_panic_hook = "0.1.7"
 iyes_progress = "0.9.1"
+leafwing-input-manager = "0.10.0"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies.rand]
+version = "0.8.5"
+features = ["small_rng"]
 
 [dependencies.bevy]
 version = "0.11.3"
