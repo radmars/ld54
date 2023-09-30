@@ -63,7 +63,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v2
         with:
-          path: ld54-${{ github.run_number }}
+          path: ld54-v${{ github.run_number }}
 
       - name: Deploy to GitHub Pages
         id: deployment
