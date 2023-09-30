@@ -3,6 +3,41 @@ name = "ld54"
 version = "0.1.0"
 edition = "2021"
 
+[dependencies]
+console_error_panic_hook = "0.1.7"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
+[dependencies.bevy]
+version = "0.11.3"
+
+default-features = false
+# https://bevy-cheatbook.github.io/setup/bevy-config.html
+features = [
+	# "animation",
+	"bevy_asset",
+	"bevy_audio",
+	"bevy_gilrs",
+	# "bevy_scene",
+	"bevy_winit",
+	"bevy_core_pipeline",
+	# "bevy_pbr",
+	# "bevy_gltf",
+	"bevy_render",
+	"bevy_sprite",
+	"bevy_text",
+	"bevy_ui",
+	# "multi-threaded",
+	"png",
+	# "hdr",
+	# "ktx2",
+	# "zstd",
+	"vorbis",
+	# "x11",
+	# "filesystem_watcher",
+	"bevy_gizmos",
+	# "android_shared_stdcxx",
+	# "tonemapping_luts",
+	"default_font",
+	"webgl2",
+]
