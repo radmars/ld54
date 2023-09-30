@@ -42,6 +42,7 @@ enum GameState {
     #[default]
     Loading,
     Setup,
+    Splash,
     Playing,
 }
 
@@ -72,7 +73,7 @@ fn main() {
             })
             // Fix sprite blur
             .set(ImagePlugin::default_nearest()),
-            loading_plugin,
+        loading_plugin,
         //  InputManagerPlugin::<Action>::default(),
         //  PhysicsPlugins::default(),
     ))
@@ -82,14 +83,12 @@ fn main() {
     .insert_resource(Msaa::Off)
     .insert_resource(ClearColor(Color::hex("#000000").unwrap()))
     .add_systems(Update, bevy::window::close_on_esc)
-    .add_systems(Update, something)
+    .add_systems(Update, (wait_to_start).run_if(in_state(GameState::Splash)))
+    .add_systems(OnEnter(GameState::Setup), setup)
+    .add_systems(OnEnter(GameState::Splash), splash_setup)
+    .add_systems(OnExit(GameState::Splash), splash_exit)
+    .add_systems(OnEnter(GameState::Playing), playing_setup)
     .run();
-}
-
-fn something(k: Res<Input<KeyCode>>) {
-    if k.just_pressed(KeyCode::J) {
-        info!("Hohoho");
-    }
 }
 
 #[derive(AssetCollection, Resource)]
@@ -103,4 +102,40 @@ struct LDAssets {
 
     #[asset(path = "splash.png")]
     splash: Handle<Image>,
+}
+
+fn setup(mut commands: Commands, mut next_state: ResMut<NextState<GameState>>) {
+    commands.spawn(Camera2dBundle::default());
+    next_state.set(GameState::Splash);
+}
+
+fn splash_setup(assets: Res<LDAssets>, mut commands: Commands) {
+    commands.spawn(SpriteBundle {
+        texture: assets.splash.clone(),
+        ..default()
+    });
+}
+
+fn splash_exit(mut commands: Commands, things_to_remove: Query<Entity, With<Sprite>>) {
+    for thing_to_remove in &things_to_remove {
+        let mut entity_commands = commands.entity(thing_to_remove);
+        entity_commands.despawn();
+    }
+}
+
+fn wait_to_start(k: Res<Input<KeyCode>>, mut next_state: ResMut<NextState<GameState>>) {
+    if k.just_pressed(KeyCode::J) {
+        next_state.set(GameState::Playing);
+    }
+}
+
+fn playing_setup(assets: Res<LDAssets>, mut commands: Commands) {
+    commands.spawn(SpriteBundle {
+        texture: assets.gamebg.clone(),
+        ..default()
+    });
+    // commands.spawn(SpriteBundle {
+    //     texture: assets.player.clone(),
+    //     ..default()
+    // });
 }
