@@ -1,0 +1,70 @@
+name: Release
+
+permissions:
+  pull-requests: write
+  id-token: write
+  contents: write
+  pages: write
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  # Build and packages all the things
+  upload-artifacts:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+            lfs: 'true'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - uses: jetli/trunk-action@v0.4.0
+      # TODO: Separate build to its own action so it can be reused...
+      - name: Run build
+        run: |
+          set -ex
+
+          tag="v${{github.run_number}}"
+
+          git tag "$tag"
+          git push --tags
+          gh release create "$tag" --generate-notes
+
+          trunk build --release
+
+          sed -i 's|"/gbj|"./gbj|g' dist/index.html
+
+          touch dist/.nojekyll
+
+          mv dist gbj-${tag}
+
+          zip -r gbj-${tag}.zip gbj-${tag}
+
+          gh release upload ${tag} gbj-${tag}.zip
+
+          gh release edit ${tag} --draft=false
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v3
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: gbj-${{ github.run_number }}
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
