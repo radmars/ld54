@@ -34,7 +34,11 @@
 #![allow(elided_lifetimes_in_paths)]
 
 use animation::{animate, AnimationIndices};
-use bevy::{prelude::*, window::WindowResolution};
+use bevy::{
+    prelude::*,
+    sprite::collide_aabb::{collide, Collision},
+    window::WindowResolution,
+};
 use bevy_asset_loader::prelude::*;
 use iyes_progress::prelude::*;
 use leafwing_input_manager::{axislike::VirtualAxis, prelude::*};
@@ -49,6 +53,8 @@ const LEFT_WALL: f32 = -400.0;
 const RIGHT_WALL: f32 = 400.0;
 const BOTTOM_WALL: f32 = -300.0;
 const TOP_WALL: f32 = 300.0;
+// We pretend walls are sprites so we can use their collision logic
+const WALL_THICKNESS: f32 = 50.0;
 
 const ROCK_WIDTH: f32 = 64.0;
 const ROCK_HEIGHT: f32 = 52.0;
@@ -61,7 +67,7 @@ const GAP_BETWEEN_ROCKS_AND_SIDES: f32 = 30.0;
 const GAP_BETWEEN_ROCKS_AND_PADDLE: f32 = 200.0;
 
 const BALL_START: Vec3 = Vec3::new(0.0, 200.0, 1.0);
-const BALL_SPEED: f32 = 400.0;
+const BALL_SPEED: f32 = 250.0;
 
 mod animation;
 
@@ -101,7 +107,10 @@ fn main() {
                     focused: true,
                     mode: bevy::window::WindowMode::Windowed,
                     resizable: false,
-                    resolution: WindowResolution::new(800.0, 600.0),
+                    resolution: WindowResolution::new(
+                        RIGHT_WALL - LEFT_WALL,
+                        TOP_WALL - BOTTOM_WALL,
+                    ),
                     transparent: true,
                     ..Default::default()
                 }),
@@ -153,7 +162,12 @@ fn main() {
     )
     .add_systems(
         Update,
-        (player_physics, paddle_ai, ball_physics)
+        (
+            player_physics.before(check_for_collisions),
+            paddle_ai.before(check_for_collisions),
+            ball_physics.before(check_for_collisions),
+            check_for_collisions,
+        )
             .run_if(in_state(GameState::Playing))
             .after(player_inputs),
     )
@@ -229,6 +243,7 @@ fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
             transform: Transform::from_translation(Vec3::new(0.0, 270.0, 4.0)),
             ..Default::default()
         },
+        collider: Collider,
     });
 }
 
@@ -264,6 +279,11 @@ fn playing_setup(
         ..default()
     });
 
+    commands.spawn(WallBundle::new(WallLocation::Left));
+    commands.spawn(WallBundle::new(WallLocation::Right));
+    commands.spawn(WallBundle::new(WallLocation::Bottom));
+    commands.spawn(WallBundle::new(WallLocation::Top));
+
     spawn_paddle(&mut commands, &assets);
 
     let idle_player = player_animations.idle.clone();
@@ -285,6 +305,7 @@ fn playing_setup(
         animation_indices: idle_player,
         player: Player::default(),
         velocity: Velocity(Vec2::ZERO),
+        collider: Collider,
     };
     commands.spawn(pb);
 
@@ -294,7 +315,7 @@ fn playing_setup(
     let start_velocity = rotation.mul_vec3(Vec3::new(BALL_SPEED, 0., 0.)).truncate();
 
     commands.spawn(BallBundle {
-        ball: Ball {},
+        ball: Ball,
         sprite: SpriteBundle {
             texture: assets.bomb.clone(),
             transform: Transform {
@@ -346,7 +367,6 @@ fn playing_setup(
 
             let image_index = image_indices.choose(&mut rng.rng).unwrap();
 
-            // brick
             commands.spawn(RockBundle {
                 sprite: SpriteSheetBundle {
                     texture_atlas: assets.rocks.clone(),
@@ -360,11 +380,15 @@ fn playing_setup(
                     },
                     ..default()
                 },
-                ..default()
+                rock: Rock,
+                collider: Collider,
             });
         }
     }
 }
+
+#[derive(Component)]
+struct Collider;
 
 #[derive(Component, Default)]
 struct Player {}
@@ -378,6 +402,7 @@ struct PlayerBundle {
     sprite: SpriteSheetBundle,
     animation_indices: AnimationIndices,
     velocity: Velocity,
+    collider: Collider,
 }
 
 #[derive(Component)]
@@ -390,23 +415,25 @@ struct PaddleBundle {
     paddle: Paddle,
     #[bundle()]
     sprite: SpriteBundle,
+    collider: Collider,
 }
 
 #[derive(Component, Default)]
-struct Rock {}
+struct Rock;
 
-#[derive(Bundle, Default)]
+#[derive(Bundle)]
 struct RockBundle {
     rock: Rock,
     #[bundle()]
     sprite: SpriteSheetBundle,
+    collider: Collider,
 }
 
 #[derive(Component, Deref, DerefMut)]
 struct Velocity(Vec2);
 
 #[derive(Component, Default)]
-struct Ball {}
+struct Ball;
 
 #[derive(Bundle)]
 struct BallBundle {
@@ -414,6 +441,71 @@ struct BallBundle {
     #[bundle()]
     sprite: SpriteBundle,
     velocity: Velocity,
+}
+
+enum WallLocation {
+    Left,
+    Right,
+    Bottom,
+    Top,
+}
+
+impl WallLocation {
+    fn position(&self) -> Vec2 {
+        match self {
+            WallLocation::Left => Vec2::new(LEFT_WALL - WALL_THICKNESS / 2., 0.),
+            WallLocation::Right => Vec2::new(RIGHT_WALL + WALL_THICKNESS / 2., 0.),
+            WallLocation::Bottom => Vec2::new(0., BOTTOM_WALL - WALL_THICKNESS / 2.),
+            WallLocation::Top => Vec2::new(0., TOP_WALL + WALL_THICKNESS / 2.),
+        }
+    }
+
+    fn size(&self) -> Vec2 {
+        let arena_height = TOP_WALL - BOTTOM_WALL;
+        let arena_width = RIGHT_WALL - LEFT_WALL;
+        // Make sure we haven't messed up our constants
+        assert!(arena_height > 0.0);
+        assert!(arena_width > 0.0);
+
+        match self {
+            WallLocation::Left | WallLocation::Right => {
+                Vec2::new(WALL_THICKNESS, arena_height + WALL_THICKNESS)
+            }
+            WallLocation::Bottom | WallLocation::Top => {
+                Vec2::new(arena_width + WALL_THICKNESS, WALL_THICKNESS)
+            }
+        }
+    }
+}
+
+#[derive(Bundle)]
+struct WallBundle {
+    sprite_bundle: SpriteBundle,
+    collider: Collider,
+}
+
+impl WallBundle {
+    // This "builder method" allows us to reuse logic across our wall entities,
+    // making our code easier to read and less prone to bugs when we change the logic
+    fn new(location: WallLocation) -> WallBundle {
+        WallBundle {
+            sprite_bundle: SpriteBundle {
+                transform: Transform {
+                    // We need to convert our Vec2 into a Vec3, by giving it a z-coordinate
+                    // This is used to determine the order of our sprites
+                    translation: location.position().extend(0.0),
+                    // The z-scale of 2D objects must always be 1.0,
+                    // or their ordering will be affected in surprising ways.
+                    // See https://github.com/bevyengine/bevy/issues/4149
+                    scale: location.size().extend(1.0),
+                    ..default()
+                },
+                sprite: Sprite { ..default() },
+                ..default()
+            },
+            collider: Collider,
+        }
+    }
 }
 
 #[derive(Actionlike, PartialEq, Eq, Clone, Copy, Hash, Debug, Reflect)]
@@ -510,7 +602,7 @@ fn ball_physics(
     mut ball_query: Query<(&mut Velocity, &mut Transform), With<Ball>>,
     time: Res<Time>,
 ) {
-    let Ok((velocity, mut transform)) = ball_query.get_single_mut() else {
+    let Ok((mut velocity, mut transform)) = ball_query.get_single_mut() else {
         return;
     };
 
@@ -520,4 +612,56 @@ fn ball_physics(
 
     transform.translation.y += velocity.y * delta;
     transform.translation.x += velocity.x * delta;
+}
+
+fn check_for_collisions(
+    mut commands: Commands,
+    mut ball_query: Query<(&mut Velocity, &Transform), With<Ball>>,
+    collider_query: Query<(Entity, &Transform, Option<&Rock>), With<Collider>>,
+) {
+    let (mut ball_velocity, ball_transform) = ball_query.single_mut();
+    let ball_size = ball_transform.scale.truncate();
+
+    // check if the ball has collided with any other entity
+    for (collider_entity, transform, maybe_brick) in &collider_query {
+        let collision = collide(
+            ball_transform.translation,
+            ball_size,
+            transform.translation,
+            transform.scale.truncate(),
+        );
+        if let Some(collision) = collision {
+            info!("Collision!");
+            // Bricks should be despawned
+            if maybe_brick.is_some() {
+                commands.entity(collider_entity).despawn();
+            }
+
+            // reflect the ball when it collides
+            let mut reflect_x = false;
+            let mut reflect_y = false;
+
+            // only reflect if the ball's velocity is going in the opposite direction of the
+            // collision
+            match collision {
+                Collision::Left => reflect_x = ball_velocity.x > 0.0,
+                Collision::Right => reflect_x = ball_velocity.x < 0.0,
+                Collision::Top => reflect_y = ball_velocity.y < 0.0,
+                Collision::Bottom => reflect_y = ball_velocity.y > 0.0,
+                Collision::Inside => {
+                    info!("Inside!") /* do nothing */
+                }
+            }
+
+            // reflect velocity on the x-axis if we hit something on the x-axis
+            if reflect_x {
+                ball_velocity.x = -ball_velocity.x;
+            }
+
+            // reflect velocity on the y-axis if we hit something on the y-axis
+            if reflect_y {
+                ball_velocity.y = -ball_velocity.y;
+            }
+        }
+    }
 }
