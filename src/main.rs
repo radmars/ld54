@@ -303,10 +303,12 @@ fn playing_setup(
         ..default()
     });
 
-    commands.spawn(WallBundle::new(WallLocation::Left));
-    commands.spawn(WallBundle::new(WallLocation::Right));
-    commands.spawn(WallBundle::new(WallLocation::Bottom));
-    commands.spawn(WallBundle::new(WallLocation::Top));
+    commands.spawn(WallBundle::new(WallLocation::Left, false));
+    commands.spawn(WallBundle::new(WallLocation::Right, false));
+    commands.spawn(WallBundle::new(WallLocation::Bottom, false));
+    commands
+        .spawn(WallBundle::new(WallLocation::Top, true))
+        .insert(Sensor);
 
     spawn_paddle(&mut commands, &assets);
 
@@ -468,10 +470,7 @@ impl RockBundle {
             ),
             // collider: Collider::cuboid(60.0, if image_index == 1 { 18.0 } else { 25.0 }),
             rigid_body: RigidBody::Static,
-            collision_layer: CollisionLayers::new(
-                [Layer::Rock],
-                [Layer::Ball, Layer::Player, Layer::Wall],
-            ),
+            collision_layer: CollisionLayers::new([Layer::Rock], [Layer::Ball, Layer::Player]),
         }
     }
 }
@@ -496,7 +495,7 @@ struct BallBundle {
 impl BallBundle {
     fn new(assets: &Res<LDAssets>, rng: &mut Randomizer, paddle_location: Vec3) -> BallBundle {
         // Randomize starting direction of ball
-        let angle = rng.rng.gen_range(-PI/4.0 .. PI / 4.0);
+        let angle = rng.rng.gen_range(-PI / 4.0..PI / 4.0);
         let rotation = Quat::from_axis_angle(Vec3::Z, angle);
         let start_velocity = rotation.mul_vec3(Vec3::new(0., -BALL_SPEED, 0.)).truncate();
 
@@ -522,7 +521,13 @@ impl BallBundle {
             gravity_scale: GravityScale(0.0),
             collision_layer: CollisionLayers::new(
                 [Layer::Ball],
-                [Layer::Rock, Layer::Player, Layer::Paddle, Layer::Wall],
+                [
+                    Layer::Rock,
+                    Layer::Player,
+                    Layer::Paddle,
+                    Layer::Wall,
+                    Layer::Ball,
+                ],
             ),
         }
     }
@@ -594,8 +599,14 @@ impl WallLocation {
     }
 }
 
+#[derive(Component)]
+struct Wall {
+    ball_destroyer: bool,
+}
+
 #[derive(Bundle)]
 struct WallBundle {
+    wall: Wall,
     sprite_bundle: SpriteBundle,
     collider: Collider,
     rigid_body: RigidBody,
@@ -606,8 +617,9 @@ struct WallBundle {
 impl WallBundle {
     // This "builder method" allows us to reuse logic across our wall entities,
     // making our code easier to read and less prone to bugs when we change the logic
-    fn new(location: WallLocation) -> WallBundle {
+    fn new(location: WallLocation, ball_destroyer: bool) -> WallBundle {
         WallBundle {
+            wall: Wall { ball_destroyer },
             rigid_body: RigidBody::Static,
             sprite_bundle: SpriteBundle {
                 transform: Transform {
@@ -732,8 +744,7 @@ fn ball_collisions(
     mut commands: Commands,
     mut ev_mid: EventReader<Collision>,
     balls: Query<Entity, With<Ball>>,
-    mut linear_velocity: Query<&mut LinearVelocity>,
-    collisions: Query<(Entity, Option<&Rock>), With<Collider>>,
+    collisions: Query<(Entity, Option<&Rock>, Option<&Wall>), With<Collider>>,
 ) {
     for e in &mut ev_mid {
         let maybe_ball = balls
@@ -741,20 +752,26 @@ fn ball_collisions(
             .ok()
             .or_else(|| balls.get(e.0.entity2).ok());
 
-        if let Some(mut ball_v) = maybe_ball.and_then(|b| linear_velocity.get_mut(b).ok()) {
+        if let Some(ball) = maybe_ball {
             /*
             let m = e.0.manifolds.first().unwrap();
             let first = balls.contains(e.0.entity1);
             let normal_normal = if first { m.normal1 } else { -m.normal1 };
             ball_v.0 = ball_v.0 - (ball_v.0.dot(normal_normal) * normal_normal * 2.0);
             */
-            if let Some((e, maybe_rock)) = collisions
+            if let Some((e, maybe_rock, maybe_wall)) = collisions
                 .get(e.0.entity1)
                 .ok()
                 .or_else(|| collisions.get(e.0.entity2).ok())
             {
                 if maybe_rock.is_some() {
                     commands.entity(e).despawn_recursive();
+                }
+
+                if let Some(wall) = maybe_wall {
+                    if wall.ball_destroyer {
+                        commands.entity(ball).despawn_recursive();
+                    }
                 }
             }
         }
