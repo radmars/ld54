@@ -340,7 +340,8 @@ fn playing_setup(
             [Layer::Player],
             [Layer::Rock, Layer::Wall, Layer::Paddle, Layer::Ball],
         ),
-        restitution: Restitution::PERFECTLY_INELASTIC,
+        restitution: Restitution::PERFECTLY_INELASTIC.with_combine_rule(CoefficientCombine::Min),
+        sleeping_disabled: SleepingDisabled,
     };
     commands.spawn(pb);
 
@@ -384,7 +385,9 @@ fn playing_setup(
             );
 
             let image_index = image_indices.choose(&mut rng.rng).unwrap();
-            commands.spawn(RockBundle::new(&assets, *image_index, rock_position));
+            commands.spawn(RockBundle::new(&assets, *image_index, rock_position)).with_children(|parent| {
+                parent.spawn(RockSensorBundle::new(parent.parent_entity()));
+            });
         }
     }
 }
@@ -407,6 +410,7 @@ struct PlayerBundle {
     gravity_scale: GravityScale,
     collision_layer: CollisionLayers,
     restitution: Restitution,
+    sleeping_disabled: SleepingDisabled,
 }
 
 #[derive(Component)]
@@ -445,6 +449,7 @@ struct RockBundle {
     collider: Collider,
     rigid_body: RigidBody,
     collision_layer: CollisionLayers,
+    sleeping_disabled: SleepingDisabled,
 }
 
 impl RockBundle {
@@ -471,6 +476,39 @@ impl RockBundle {
             // collider: Collider::cuboid(60.0, if image_index == 1 { 18.0 } else { 25.0 }),
             rigid_body: RigidBody::Static,
             collision_layer: CollisionLayers::new([Layer::Rock], [Layer::Ball, Layer::Player]),
+            sleeping_disabled: SleepingDisabled,
+        }
+    }
+}
+
+#[derive(Component)]
+struct RockSensor {
+    target: Entity,
+}
+
+#[derive(Bundle)]
+struct RockSensorBundle {
+    sprite: SpriteBundle,
+    rock_sensor: RockSensor,
+    sensor: Sensor,
+    collision_layer: CollisionLayers,
+    rigid_body: RigidBody,
+    collider: Collider,
+}
+
+impl RockSensorBundle {
+    fn new(target: Entity) -> Self {
+        RockSensorBundle {
+            sprite: SpriteBundle::default(),
+            rock_sensor: RockSensor { target },
+            sensor: Sensor,
+            collision_layer: CollisionLayers::new([Layer::Rock], [Layer::Ball]),
+            rigid_body: RigidBody::Static,
+            collider: Collider::capsule_endpoints(
+                Vec2::new(-20.0, 0.0),
+                Vec2::new(20.0, 0.0),
+                18.0,
+            ),
         }
     }
 }
@@ -490,6 +528,7 @@ struct BallBundle {
     friction: Friction,
     gravity_scale: GravityScale,
     collision_layer: CollisionLayers,
+    sleeping_disabled: SleepingDisabled,
 }
 
 impl BallBundle {
@@ -529,6 +568,7 @@ impl BallBundle {
                     Layer::Ball,
                 ],
             ),
+            sleeping_disabled: SleepingDisabled,
         }
     }
 }
@@ -701,7 +741,7 @@ fn check_for_gg(
         return;
     };
 
-    if player_xform.translation.y < -380.0 {
+    if player_xform.translation.y < -270.0 {
         next_state.set(GameState::GameOver);
     }
 }
@@ -742,30 +782,24 @@ pub(crate) fn player_animation(
 
 fn ball_collisions(
     mut commands: Commands,
-    mut ev_mid: EventReader<Collision>,
+    mut collision_end: EventReader<CollisionEnded>,
     balls: Query<Entity, With<Ball>>,
-    collisions: Query<(Entity, Option<&Rock>, Option<&Wall>), With<Collider>>,
+    collisions: Query<(Entity, Option<&RockSensor>, Option<&Wall>), With<Collider>>,
 ) {
-    for e in &mut ev_mid {
+    for e in &mut collision_end {
         let maybe_ball = balls
-            .get(e.0.entity1)
+            .get(e.0)
             .ok()
-            .or_else(|| balls.get(e.0.entity2).ok());
+            .or_else(|| balls.get(e.1).ok());
 
         if let Some(ball) = maybe_ball {
-            /*
-            let m = e.0.manifolds.first().unwrap();
-            let first = balls.contains(e.0.entity1);
-            let normal_normal = if first { m.normal1 } else { -m.normal1 };
-            ball_v.0 = ball_v.0 - (ball_v.0.dot(normal_normal) * normal_normal * 2.0);
-            */
             if let Some((e, maybe_rock, maybe_wall)) = collisions
-                .get(e.0.entity1)
+                .get(e.0)
                 .ok()
-                .or_else(|| collisions.get(e.0.entity2).ok())
+                .or_else(|| collisions.get(e.1).ok())
             {
-                if maybe_rock.is_some() {
-                    commands.entity(e).despawn_recursive();
+                if let Some(rock) = maybe_rock {
+                    commands.entity(rock.target).despawn_recursive();
                 }
 
                 if let Some(wall) = maybe_wall {
