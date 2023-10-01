@@ -172,7 +172,7 @@ fn main() {
     .add_systems(Update, ball_collisions.run_if(in_state(GameState::Playing)))
     .add_systems(
         Update,
-        (player_animation, paddle_ai, check_for_gg, spawn_ball)
+        (player_animation, paddle_ai, check_for_gg, spawn_ball_timer)
             .run_if(in_state(GameState::Playing)),
     )
     .run();
@@ -269,25 +269,42 @@ fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
 fn paddle_ai(
     time: Res<Time>,
     mut paddle_query: Query<(&mut Paddle, &mut Transform), Without<Ball>>,
-    mut ball_query: Query<(&Ball, &Transform), Without<Paddle>>,
+    ball_query: Query<(&Ball, &Transform, &LinearVelocity), Without<Paddle>>,
 ) {
-    let Ok((mut paddle, mut transform)) = paddle_query.get_single_mut() else {
+    let Ok((mut paddle, mut paddle_transform)) = paddle_query.get_single_mut() else {
         return;
     };
-    let Ok((_ball, ball_transform)) = ball_query.get_single_mut() else {
-        return;
-    };
+
+    let mut closest = Vec3::new(0.0, BOTTOM_WALL, 0.0); // Is there a cleaner way to do this?
+    for (_ball, ball_transform, ball_velocity) in &ball_query {
+        if (paddle_transform.translation - ball_transform.translation).length()
+            < (paddle_transform.translation - closest).length()
+        {
+            closest = ball_transform.translation;
+        }
+    }
+
+    // ball_query.iter().min_by(|i| (paddle_transform.translation - i[1].translation).length());
+    // let result = ball_query
+    //     .iter()
+    //     .map(|(ball, ball_transform, ball_velocity)| ((paddle_transform.translation - ball_transform.translation).length(), ball_transform))
+    //     .min_by(|a, b| a.0.partial_cmp(&b.0).expect("Encountered a bad floating point!"))
+    //     .map(|(_, transform)| transform);
+
+    // if let Some(target) = result {
+    //     "foobar"
+    // }
 
     let amount = PADDLE_SPEED * time.delta().as_secs_f32();
 
-    paddle.left = transform.translation.x > ball_transform.translation.x;
+    paddle.left = paddle_transform.translation.x > closest.x;
 
     if paddle.left {
-        if transform.translation.x - PADDLE_SIZE.x / 2. > LEFT_WALL {
-            transform.translation.x -= amount;
+        if paddle_transform.translation.x - PADDLE_SIZE.x / 2. > LEFT_WALL {
+            paddle_transform.translation.x -= amount;
         }
-    } else if transform.translation.x + PADDLE_SIZE.x / 2. < RIGHT_WALL {
-        transform.translation.x += amount;
+    } else if paddle_transform.translation.x + PADDLE_SIZE.x / 2. < RIGHT_WALL {
+        paddle_transform.translation.x += amount;
     }
 }
 
@@ -385,9 +402,11 @@ fn playing_setup(
             );
 
             let image_index = image_indices.choose(&mut rng.rng).unwrap();
-            commands.spawn(RockBundle::new(&assets, *image_index, rock_position)).with_children(|parent| {
-                parent.spawn(RockSensorBundle::new(parent.parent_entity()));
-            });
+            commands
+                .spawn(RockBundle::new(&assets, *image_index, rock_position))
+                .with_children(|parent| {
+                    parent.spawn(RockSensorBundle::new(parent.parent_entity()));
+                });
         }
     }
 }
@@ -585,7 +604,7 @@ impl Default for BallSpawnTimer {
     }
 }
 
-fn spawn_ball(
+fn spawn_ball_timer(
     time: Res<Time>,
     assets: Res<LDAssets>,
     mut rng: ResMut<Randomizer>,
@@ -787,10 +806,7 @@ fn ball_collisions(
     collisions: Query<(Entity, Option<&RockSensor>, Option<&Wall>), With<Collider>>,
 ) {
     for e in &mut collision_end {
-        let maybe_ball = balls
-            .get(e.0)
-            .ok()
-            .or_else(|| balls.get(e.1).ok());
+        let maybe_ball = balls.get(e.0).ok().or_else(|| balls.get(e.1).ok());
 
         if let Some(ball) = maybe_ball {
             if let Some((_, maybe_rock, maybe_wall)) = collisions
