@@ -316,25 +316,34 @@ fn paddle_ai(
         return;
     };
 
-    let mut closest = Vec3::new(0.0, BOTTOM_WALL, 0.0); // Is there a cleaner way to do this?
-    for (_ball, ball_transform, ball_velocity) in &ball_query {
-        if (paddle_transform.translation - ball_transform.translation).length()
-            < (paddle_transform.translation - closest).length()
-        {
-            closest = ball_transform.translation;
-        }
+    // Try to catch the ball that will soonest collide with the top
+    let result = ball_query
+        .iter()
+        // Unwrap the translation
+        .map(|(_, t, v)| (t.translation, v))
+        // Ignore balls that are above the paddle
+        .filter(|(t, _)| t.y < (PADDLE_START.y - PADDLE_SIZE.y / 2.0))
+        .map(|(t, v)| ((TOP_WALL - t.y) / v.y, t))
+        // Correct for balls with downward velocities
+        .map(|(i, t)| {
+            if i < 0.0 {
+                (-i + (TOP_WALL - BOTTOM_WALL) / 2.0, t)
+            } else {
+                (i, t)
+            }
+        })
+        .min_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .expect("Encountered a bad floating point!")
+        })
+        .map(|(_, translation)| translation);
+
+    let closest: Vec3;
+    if let Some(i) = result {
+        closest = i;
+    } else {
+        return;
     }
-
-    // ball_query.iter().min_by(|i| (paddle_transform.translation - i[1].translation).length());
-    // let result = ball_query
-    //     .iter()
-    //     .map(|(ball, ball_transform, ball_velocity)| ((paddle_transform.translation - ball_transform.translation).length(), ball_transform))
-    //     .min_by(|a, b| a.0.partial_cmp(&b.0).expect("Encountered a bad floating point!"))
-    //     .map(|(_, transform)| transform);
-
-    // if let Some(target) = result {
-    //     "foobar"
-    // }
 
     let amount = PADDLE_SPEED * time.delta().as_secs_f32();
 
