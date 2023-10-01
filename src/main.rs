@@ -187,6 +187,9 @@ struct LDAssets {
 
     #[asset(path = "splash.png")]
     splash: Handle<Image>,
+
+    #[asset(path = "bomb.png")]
+    bomb: Handle<Image>,
 }
 
 fn setup(mut commands: Commands, mut next_state: ResMut<NextState<GameState>>) {
@@ -249,6 +252,28 @@ fn playing_setup(
     };
     commands.spawn(pb);
 
+    commands.spawn(BallBundle {
+        ball: Ball {},
+        sprite: SpriteSheetBundle {
+            texture_atlas: assets.bomb.clone(),
+            transform: Transform {
+                translation: Vec3::new(
+                    0.,
+                    0.,
+                    1.,
+                ),
+                ..default()
+            },
+            ..default()
+        },
+        velocity: Velocity(
+            Vec2 {
+                x: 20.,
+                y: 20.,
+            }
+        ),
+    });
+
     // Spawn as many rocks as we can given the boundaries defined by the constants
     let total_width_of_rocks = (RIGHT_WALL - LEFT_WALL) - 2. * GAP_BETWEEN_ROCKS_AND_SIDES;
     let top_edge_of_rocks = paddle_y - GAP_BETWEEN_ROCKS_AND_PADDLE;
@@ -297,7 +322,7 @@ fn playing_setup(
                         ..default()
                     },
                     transform: Transform {
-                        translation: rock_position.extend(0.0),
+                        translation: rock_position.extend(1.0),
                         ..default()
                     },
                     ..default()
@@ -327,9 +352,24 @@ struct Rock {}
 
 #[derive(Bundle, Default)]
 struct RockBundle {
+struct RockBundle {
     rock: Rock,
     #[bundle()]
     sprite: SpriteSheetBundle,
+}
+
+#[derive(Component, Deref, DerefMut)]
+struct Velocity(Vec2);
+
+#[derive(Component, Default)]
+struct Ball {}
+
+#[derive(Bundle)]
+struct BallBundle {
+    ball: Ball,
+    #[bundle()]
+    sprite: SpriteSheetBundle,
+    velocity: Velocity,
 }
 
 #[derive(Actionlike, PartialEq, Eq, Clone, Copy, Hash, Debug, Reflect)]
