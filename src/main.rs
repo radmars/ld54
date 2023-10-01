@@ -496,7 +496,7 @@ struct BallBundle {
 impl BallBundle {
     fn new(assets: &Res<LDAssets>, rng: &mut Randomizer, paddle_location: Vec3) -> BallBundle {
         // Randomize starting direction of ball
-        let angle = rng.rng.gen_range(-PI / 4...PI / 4.);
+        let angle = rng.rng.gen_range(-PI/4.0 .. PI / 4.0);
         let rotation = Quat::from_axis_angle(Vec3::Z, angle);
         let start_velocity = rotation.mul_vec3(Vec3::new(0., -BALL_SPEED, 0.)).truncate();
 
