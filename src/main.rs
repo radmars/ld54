@@ -33,8 +33,8 @@
 // I'm not sure i like this 2018 idiom. Can debate it later.
 #![allow(elided_lifetimes_in_paths)]
 
-use std::f32::consts::PI;
 use std::time::Duration;
+use std::{collections::HashMap, f32::consts::PI};
 
 use animation::{maybe_change_animation, AnimationIndices};
 use bevy::{prelude::*, sprite::Anchor, window::WindowResolution};
@@ -80,6 +80,39 @@ struct PlayerAnimationTable {
     jump_down: AnimationIndices,
 }
 
+impl Default for PlayerAnimationTable {
+    fn default() -> Self {
+        PlayerAnimationTable {
+            idle: AnimationIndices {
+                first: 0,
+                last: 0,
+                timer: Timer::from_seconds(0.03, TimerMode::Repeating),
+            },
+            walk: AnimationIndices {
+                first: 1,
+                last: 2,
+                timer: Timer::from_seconds(0.03, TimerMode::Repeating),
+            },
+            jump_up: AnimationIndices {
+                first: 4,
+                last: 5,
+                timer: Timer::from_seconds(0.03, TimerMode::Once),
+            },
+            jump_down: AnimationIndices {
+                first: 6,
+                last: 6,
+                timer: Timer::from_seconds(0.03, TimerMode::Once),
+            },
+        }
+    }
+}
+
+#[derive(Resource)]
+struct GameOptions {
+    debug: bool,
+    skip: bool,
+}
+
 #[derive(States, Default, Copy, Clone, Eq, PartialEq, Debug, Hash)]
 enum GameState {
     #[default]
@@ -91,8 +124,29 @@ enum GameState {
 }
 
 fn main() {
-    #[cfg(target_arch = "wasm32")]
-    console_error_panic_hook::set_once();
+    let mut options = HashMap::<String, String>::new();
+
+    if cfg!(target_arch = "wasm32") {
+        console_error_panic_hook::set_once();
+        let w = web_sys::window().expect("Couldn't find the window!");
+        let s = w.location().search().expect("No search?");
+        if let Some(text) = s.get(1..) {
+            if text.contains('&') {
+                text.split('&')
+                    .filter_map(|sub| sub.split_once('='))
+                    .for_each(|(left, right)| {
+                        options.insert(left.to_owned(), right.to_owned());
+                    });
+            } else if let Some((left, right)) = text.split_once('=') {
+                options.insert(left.to_owned(), right.to_owned());
+            }
+        }
+    }
+
+    let game_options = GameOptions {
+        debug: options.contains_key("debug"),
+        skip: options.contains_key("skip"),
+    };
 
     let mut app = App::default();
 
@@ -127,37 +181,19 @@ fn main() {
     .add_loading_state(loading_state)
     .add_collection_to_loading_state::<_, LDAssets>(loading_game_state)
     .add_state::<GameState>()
-    .insert_resource(PhysicsTimestep::Fixed(1.0 / 120.0))
-    .insert_resource(PlayerAnimationTable {
-        idle: AnimationIndices {
-            first: 0,
-            last: 0,
-            timer: Timer::from_seconds(0.03, TimerMode::Repeating),
-        },
-        walk: AnimationIndices {
-            first: 1,
-            last: 2,
-            timer: Timer::from_seconds(0.03, TimerMode::Repeating),
-        },
-        jump_up: AnimationIndices {
-            first: 4,
-            last: 5,
-            timer: Timer::from_seconds(0.03, TimerMode::Once),
-        },
-        jump_down: AnimationIndices {
-            first: 6,
-            last: 6,
-            timer: Timer::from_seconds(0.03, TimerMode::Once),
-        },
-    })
+    .insert_resource(PlayerAnimationTable::default())
     .insert_resource(Msaa::Off)
     .insert_resource(ClearColor(Color::hex("#000000").unwrap()))
     .insert_resource(Randomizer::default())
-    .insert_resource(PhysicsDebugConfig::all())
+    .insert_resource(if game_options.debug {
+        PhysicsDebugConfig::all()
+    } else {
+        PhysicsDebugConfig::none()
+    })
+    .insert_resource(game_options)
     .insert_resource(Gravity(Vec2::new(0.0, -800.0)))
-    .insert_resource(SubstepCount(30))
     .insert_resource(BallSpawnTimer::default())
-    .add_systems(Update, bevy::window::close_on_esc)
+    // .add_systems(Update, bevy::window::close_on_esc)
     .add_systems(Update, (wait_to_start).run_if(in_state(GameState::Splash)))
     .add_systems(OnEnter(GameState::Setup), setup)
     .add_systems(OnEnter(GameState::Splash), splash_setup)
@@ -217,9 +253,14 @@ struct LDAssets {
     bomb: Handle<Image>,
 }
 
-fn setup(mut commands: Commands, mut next_state: ResMut<NextState<GameState>>) {
+fn setup(mut commands: Commands, mut next_state: ResMut<NextState<GameState>>, config: Res<GameOptions>) {
     commands.spawn(Camera2dBundle::default());
-    next_state.set(GameState::Splash);
+    if config.skip {
+        next_state.set(GameState::Playing);
+    }
+    else {
+        next_state.set(GameState::Splash);
+    }
 }
 
 fn splash_setup(assets: Res<LDAssets>, mut commands: Commands) {
