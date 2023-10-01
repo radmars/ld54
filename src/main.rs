@@ -33,7 +33,7 @@
 // I'm not sure i like this 2018 idiom. Can debate it later.
 #![allow(elided_lifetimes_in_paths)]
 
-use animation::{animate, AnimationIndices, AnimationLoopCompleted};
+use animation::{animate, AnimationIndices};
 use bevy::{prelude::*, window::WindowResolution};
 use bevy_asset_loader::prelude::*;
 use iyes_progress::prelude::*;
@@ -61,11 +61,15 @@ const GAP_BETWEEN_ROCKS_AND_PADDLE: f32 = 200.0;
 
 mod animation;
 
+#[derive(Component, Deref, DerefMut)]
+struct Velocity(Vec2);
+
 #[derive(Resource)]
 struct PlayerAnimationTable {
     idle: AnimationIndices,
     walk: AnimationIndices,
-    jump: AnimationIndices,
+    jump_up: AnimationIndices,
+    jump_down: AnimationIndices,
 }
 
 #[derive(States, Default, Copy, Clone, Eq, PartialEq, Debug, Hash)]
@@ -111,22 +115,26 @@ fn main() {
     .add_loading_state(loading_state)
     .add_collection_to_loading_state::<_, LDAssets>(loading_game_state)
     .add_state::<GameState>()
-    .add_event::<AnimationLoopCompleted>()
     .insert_resource(PlayerAnimationTable {
         idle: AnimationIndices {
             first: 0,
             last: 0,
-            timer: Timer::from_seconds(1., TimerMode::Repeating),
+            timer: Timer::from_seconds(0.03, TimerMode::Repeating),
         },
         walk: AnimationIndices {
             first: 1,
             last: 2,
             timer: Timer::from_seconds(0.03, TimerMode::Repeating),
         },
-        jump: AnimationIndices {
-            first: 3,
-            last: 7,
-            timer: Timer::from_seconds(0.3, TimerMode::Repeating),
+        jump_up: AnimationIndices {
+            first: 4,
+            last: 5,
+            timer: Timer::from_seconds(0.03, TimerMode::Once),
+        },
+        jump_down: AnimationIndices {
+            first: 6,
+            last: 6,
+            timer: Timer::from_seconds(0.03, TimerMode::Once),
         },
     })
     .insert_resource(Msaa::Off)
@@ -141,6 +149,12 @@ fn main() {
     .add_systems(
         Update,
         (player_inputs, animate).run_if(in_state(GameState::Playing)),
+    )
+    .add_systems(
+        Update,
+        (player_physics,)
+            .run_if(in_state(GameState::Playing))
+            .after(player_inputs),
     )
     .run();
 }
@@ -231,6 +245,7 @@ fn playing_setup(
         },
         animation_indices: idle_player,
         player: Player::default(),
+        velocity: Velocity(Vec2::ZERO),
     };
     commands.spawn(pb);
 
@@ -304,6 +319,7 @@ struct PlayerBundle {
     #[bundle()]
     sprite: SpriteSheetBundle,
     animation_indices: AnimationIndices,
+    velocity: Velocity,
 }
 
 #[derive(Component, Default)]
@@ -342,41 +358,68 @@ fn maybe_change_animation(target: &mut AnimationIndices, source: &AnimationIndic
 }
 
 fn player_inputs(
-    mut player_query: Query<
-        (
-            &mut Transform,
-            &mut TextureAtlasSprite,
-            &mut AnimationIndices,
-            &ActionState<Action>,
-        ),
-        With<Player>,
-    >,
-    player_animations: Res<PlayerAnimationTable>,
-    time: Res<Time>,
+    mut player_query: Query<(&mut Velocity, &ActionState<Action>), With<Player>>,
 ) {
-    let Ok((mut transform, mut atlas, mut animation, action_state)) = player_query.get_single_mut()
-    else {
+    let Ok((mut velocity, action_state)) = player_query.get_single_mut() else {
         return;
     };
 
     if action_state.pressed(Action::Move) {
         let x_amount = action_state.clamped_value(Action::Move);
 
-
-        // TODO: Probably need to track jumping state or vertical velocity or
-        // make animations nto input based.
-        atlas.flip_x = x_amount < 0.0;
-        maybe_change_animation(&mut animation, &player_animations.walk);
-
-        transform.translation +=
-            Vec3::new(PLAYER_X_SPEED * x_amount * time.delta_seconds(), 0.0, 0.0);
+        velocity.x =
+            (velocity.x + (x_amount * PLAYER_X_SPEED)).clamp(-PLAYER_X_SPEED, PLAYER_X_SPEED);
+    } else {
+        velocity.x = 0.0;
     }
-    //  else {
-    //    maybe_change_animation(&mut animation, &player_animations.idle);
-    //}
 
-    if action_state.just_pressed(Action::Jump) {
-        maybe_change_animation(&mut animation, &player_animations.jump);
-        transform.translation += Vec3::new(0.0, 20. * time.delta_seconds(), 0.0);
+    if action_state.just_pressed(Action::Jump) && velocity.y.abs() < f32::EPSILON {
+        velocity.y = 1000.0;
     }
+}
+
+fn player_physics(
+    mut player_query: Query<
+        (
+            &mut Velocity,
+            &mut Transform,
+            &mut TextureAtlasSprite,
+            &mut AnimationIndices,
+        ),
+        With<Player>,
+    >,
+    player_animations: Res<PlayerAnimationTable>,
+    time: Res<Time>,
+) {
+    let Ok((mut velocity, mut transform, mut atlas, mut animation)) = player_query.get_single_mut()
+    else {
+        return;
+    };
+
+    // TODO: Collision detection
+
+    // Priority is dealing with jump, then dealing with walk.
+
+    let delta = time.delta().as_secs_f32();
+
+    if velocity.y.abs() > f32::EPSILON && transform.translation.y >= 0.0 {
+        // THIS IS BAD PHYSICS: DELTA TIME IS NOT SUFFICIENT FOR THIS.
+        velocity.y -= 2200.0 * delta;
+        if velocity.y < 0.0 {
+            maybe_change_animation(&mut animation, &player_animations.jump_down);
+        } else {
+            maybe_change_animation(&mut animation, &player_animations.jump_up);
+        }
+        transform.translation.y += velocity.y * delta;
+    } else {
+        transform.translation.y = 0.0;
+        velocity.y = 0.0;
+        if velocity.x.abs() > f32::EPSILON {
+            maybe_change_animation(&mut animation, &player_animations.walk);
+        } else {
+            maybe_change_animation(&mut animation, &player_animations.idle);
+        }
+    }
+    transform.translation.x = (transform.translation.x + velocity.x * delta).clamp(-380.0, 380.0);
+    atlas.flip_x = velocity.x < 0.0;
 }
