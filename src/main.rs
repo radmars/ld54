@@ -33,10 +33,11 @@
 // I'm not sure i like this 2018 idiom. Can debate it later.
 #![allow(elided_lifetimes_in_paths)]
 
+use animation::{animate, AnimationIndices, AnimationLoopCompleted};
 use bevy::{prelude::*, window::WindowResolution};
 use bevy_asset_loader::prelude::*;
 use iyes_progress::prelude::*;
-use leafwing_input_manager::{prelude::*, axislike::VirtualAxis};
+use leafwing_input_manager::{axislike::VirtualAxis, prelude::*};
 use rand::prelude::*;
 
 const PLAYER_X_SPEED: f32 = 400.0;
@@ -57,6 +58,15 @@ const GAP_BETWEEN_ROCKS: f32 = 6.0;
 const GAP_BETWEEN_ROCKS_AND_BOTTOM: f32 = 30.0;
 const GAP_BETWEEN_ROCKS_AND_SIDES: f32 = 30.0;
 const GAP_BETWEEN_ROCKS_AND_PADDLE: f32 = 200.0;
+
+mod animation;
+
+#[derive(Resource)]
+struct PlayerAnimationTable {
+    idle: AnimationIndices,
+    walk: AnimationIndices,
+    jump: AnimationIndices,
+}
 
 #[derive(States, Default, Copy, Clone, Eq, PartialEq, Debug, Hash)]
 enum GameState {
@@ -101,6 +111,24 @@ fn main() {
     .add_loading_state(loading_state)
     .add_collection_to_loading_state::<_, LDAssets>(loading_game_state)
     .add_state::<GameState>()
+    .add_event::<AnimationLoopCompleted>()
+    .insert_resource(PlayerAnimationTable {
+        idle: AnimationIndices {
+            first: 0,
+            last: 0,
+            timer: Timer::from_seconds(1., TimerMode::Repeating),
+        },
+        walk: AnimationIndices {
+            first: 1,
+            last: 2,
+            timer: Timer::from_seconds(0.03, TimerMode::Repeating),
+        },
+        jump: AnimationIndices {
+            first: 3,
+            last: 7,
+            timer: Timer::from_seconds(0.3, TimerMode::Repeating),
+        },
+    })
     .insert_resource(Msaa::Off)
     .insert_resource(ClearColor(Color::hex("#000000").unwrap()))
     .insert_resource(Randomizer::default())
@@ -112,10 +140,7 @@ fn main() {
     .add_systems(OnEnter(GameState::Playing), playing_setup)
     .add_systems(
         Update,
-        (
-            player_inputs,
-        )
-        .run_if(in_state(GameState::Playing))
+        (player_inputs, animate).run_if(in_state(GameState::Playing)),
     )
     .run();
 }
@@ -135,7 +160,7 @@ impl Default for Randomizer {
 
 #[derive(AssetCollection, Resource)]
 struct LDAssets {
-    #[asset(texture_atlas(tile_size_x = 18., tile_size_y = 18., columns = 6, rows = 1))]
+    #[asset(texture_atlas(tile_size_x = 64., tile_size_y = 70., columns = 9, rows = 1))]
     #[asset(path = "player.png")]
     player: Handle<TextureAtlas>,
 
@@ -175,7 +200,12 @@ fn wait_to_start(k: Res<Input<KeyCode>>, mut next_state: ResMut<NextState<GameSt
     }
 }
 
-fn playing_setup(assets: Res<LDAssets>, mut rng: ResMut<Randomizer>, mut commands: Commands) {
+fn playing_setup(
+    assets: Res<LDAssets>,
+    mut rng: ResMut<Randomizer>,
+    mut commands: Commands,
+    player_animations: Res<PlayerAnimationTable>,
+) {
     let paddle_y = TOP_WALL - GAP_BETWEEN_PADDLE_AND_TOP - PADDLE_SIZE.y;
 
     commands.spawn(SpriteBundle {
@@ -183,11 +213,13 @@ fn playing_setup(assets: Res<LDAssets>, mut rng: ResMut<Randomizer>, mut command
         ..default()
     });
 
+    let idle_player = player_animations.idle.clone();
+
     let pb = PlayerBundle {
         sprite: SpriteSheetBundle {
             texture_atlas: assets.player.clone(),
             sprite: TextureAtlasSprite {
-                index: 0,
+                index: idle_player.first,
                 ..default()
             },
             transform: Transform::from_translation(Vec3::new(1.0, 2.0, 1.0)),
@@ -197,7 +229,8 @@ fn playing_setup(assets: Res<LDAssets>, mut rng: ResMut<Randomizer>, mut command
             input_map: player_input_map(),
             ..default()
         },
-        ..default()
+        animation_indices: idle_player,
+        player: Player::default(),
     };
     commands.spawn(pb);
 
@@ -261,24 +294,23 @@ fn playing_setup(assets: Res<LDAssets>, mut rng: ResMut<Randomizer>, mut command
 }
 
 #[derive(Component, Default)]
-struct Player {
-}
+struct Player {}
 
-#[derive(Bundle, Default)]
-struct PlayerBundle{
+#[derive(Bundle)]
+struct PlayerBundle {
     player: Player,
     #[bundle()]
     input_manager: InputManagerBundle<Action>,
     #[bundle()]
     sprite: SpriteSheetBundle,
+    animation_indices: AnimationIndices,
 }
 
 #[derive(Component, Default)]
-struct Rock {    
-}
+struct Rock {}
 
 #[derive(Bundle, Default)]
-struct RockBundle{
+struct RockBundle {
     rock: Rock,
     #[bundle()]
     sprite: SpriteSheetBundle,
@@ -293,7 +325,7 @@ enum Action {
 fn player_input_map() -> InputMap<Action> {
     let mut input_map = InputMap::default();
     input_map.insert(
-        UserInput::VirtualAxis(VirtualAxis { 
+        UserInput::VirtualAxis(VirtualAxis {
             negative: KeyCode::Left.into(),
             positive: KeyCode::Right.into(),
         }),
@@ -303,27 +335,48 @@ fn player_input_map() -> InputMap<Action> {
     input_map
 }
 
+fn maybe_change_animation(target: &mut AnimationIndices, source: &AnimationIndices) {
+    if target.first != source.first {
+        *target = source.clone();
+    }
+}
+
 fn player_inputs(
     mut player_query: Query<
         (
             &mut Transform,
+            &mut TextureAtlasSprite,
+            &mut AnimationIndices,
             &ActionState<Action>,
         ),
         With<Player>,
     >,
+    player_animations: Res<PlayerAnimationTable>,
     time: Res<Time>,
 ) {
-    let Ok((mut transform, action_state)) = player_query.get_single_mut() else {
+    let Ok((mut transform, mut atlas, mut animation, action_state)) = player_query.get_single_mut()
+    else {
         return;
     };
 
     if action_state.pressed(Action::Move) {
         let x_amount = action_state.clamped_value(Action::Move);
 
-        transform.translation += Vec3::new(PLAYER_X_SPEED * x_amount * time.delta_seconds(), 0.0, 0.0);
-    }
 
-    if action_state.pressed(Action::Jump) {
+        // TODO: Probably need to track jumping state or vertical velocity or
+        // make animations nto input based.
+        atlas.flip_x = x_amount < 0.0;
+        maybe_change_animation(&mut animation, &player_animations.walk);
+
+        transform.translation +=
+            Vec3::new(PLAYER_X_SPEED * x_amount * time.delta_seconds(), 0.0, 0.0);
+    }
+    //  else {
+    //    maybe_change_animation(&mut animation, &player_animations.idle);
+    //}
+
+    if action_state.just_pressed(Action::Jump) {
+        maybe_change_animation(&mut animation, &player_animations.jump);
         transform.translation += Vec3::new(0.0, 20. * time.delta_seconds(), 0.0);
     }
 }
