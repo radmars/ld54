@@ -1960,6 +1960,7 @@ dependencies = [
  "iyes_progress",
  "leafwing-input-manager",
  "rand",
+ "web-sys",
 ]
 
 [[package]]
