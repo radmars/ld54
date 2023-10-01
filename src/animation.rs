@@ -9,10 +9,7 @@ pub(crate) struct AnimationIndices {
 
 pub(crate) fn animate(
     time: Res<Time>,
-    mut animated_sprites: Query<(
-        &mut AnimationIndices,
-        &mut TextureAtlasSprite,
-    )>,
+    mut animated_sprites: Query<(&mut AnimationIndices, &mut TextureAtlasSprite)>,
 ) {
     for (mut indices, mut sprite) in &mut animated_sprites {
         indices.timer.tick(time.delta());
@@ -22,8 +19,7 @@ pub(crate) fn animate(
                 if indices.timer.mode() == TimerMode::Repeating {
                     sprite.index = indices.first;
                 }
-            }
-            else {
+            } else {
                 sprite.index = new_index;
             }
         }
