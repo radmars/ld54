@@ -42,7 +42,7 @@ use leafwing_input_manager::{axislike::VirtualAxis, prelude::*};
 use rand::prelude::*;
 use std::f32::consts::TAU; // 2 pi
 
-const PLAYER_X_SPEED: f32 = 400.0;
+const PLAYER_X_SPEED: f32 = 220.0;
 
 const PADDLE_SIZE: Vec2 = Vec2::new(64.0, 50.0);
 const PADDLE_SPEED: f32 = 200.0;
@@ -258,7 +258,6 @@ fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
         collider: Collider::capsule_endpoints(Vec2::new(-11.0, -8.0), Vec2::new(11.0, -8.0), 15.0),
         rigid_body: RigidBody::Static,
         restitution: Restitution::new(1.0).with_combine_rule(CoefficientCombine::Max),
-        sensor: Sensor,
     });
 }
 
@@ -329,11 +328,12 @@ fn playing_setup(
         collider: Collider::capsule_endpoints(Vec2::new(-5.0, 0.0), Vec2::new(10.0, 0.0), 21.0),
         external_force: ExternalForce::ZERO,
         locked_axes: LockedAxes::new().lock_rotation(),
-        gravity_scale: GravityScale(0.0),
+        gravity_scale: GravityScale(1.0),
         collision_layer: CollisionLayers::new(
             [Layer::Player],
             [Layer::Rock, Layer::Wall, Layer::Paddle, Layer::Ball],
         ),
+        restitution: Restitution::PERFECTLY_INELASTIC,
     };
     commands.spawn(pb);
 
@@ -399,6 +399,7 @@ struct PlayerBundle {
     locked_axes: LockedAxes,
     gravity_scale: GravityScale,
     collision_layer: CollisionLayers,
+    restitution: Restitution,
 }
 
 #[derive(Component)]
@@ -414,7 +415,6 @@ struct PaddleBundle {
     collider: Collider,
     rigid_body: RigidBody,
     restitution: Restitution,
-    sensor: Sensor,
 }
 
 // Define the collision layers
@@ -438,7 +438,6 @@ struct RockBundle {
     collider: Collider,
     rigid_body: RigidBody,
     collision_layer: CollisionLayers,
-    sensor: Sensor,
 }
 
 impl RockBundle {
@@ -468,7 +467,6 @@ impl RockBundle {
                 [Layer::Rock],
                 [Layer::Ball, Layer::Player, Layer::Wall],
             ),
-            sensor: Sensor,
         }
     }
 }
@@ -566,7 +564,6 @@ struct WallBundle {
     rigid_body: RigidBody,
     restitution: Restitution,
     collision_layer: CollisionLayers,
-    sensor: Sensor,
 }
 
 impl WallBundle {
@@ -595,7 +592,6 @@ impl WallBundle {
                 [Layer::Wall],
                 [Layer::Ball, Layer::Player, Layer::Rock],
             ),
-            sensor: Sensor,
         }
     }
 }
@@ -642,7 +638,7 @@ fn player_inputs(
     if action_state.just_pressed(Action::Jump) {
         // THIS IS NOT THE CORRECT WAY TO DO IT, SOLEN FROM:
         // https://github.com/Jondolf/bevy_xpbd/blob/8b2ea8fd4754fb3ecd51f79fad282d22631d2c7f/crates/bevy_xpbd_2d/examples/one_way_platform_2d.rs#L152-L157
-        if velocity.y.abs() < 0.2 {
+        if velocity.y.abs() < 0.5 {
             velocity.y = 400f32;
         }
     }
@@ -709,11 +705,12 @@ fn ball_collisions(
             .or_else(|| balls.get(e.0.entity2).ok());
 
         if let Some(mut ball_v) = maybe_ball.and_then(|b| linear_velocity.get_mut(b).ok()) {
+            /*
             let m = e.0.manifolds.first().unwrap();
             let first = balls.contains(e.0.entity1);
             let normal_normal = if first { m.normal1 } else { -m.normal1 };
             ball_v.0 = ball_v.0 - (ball_v.0.dot(normal_normal) * normal_normal * 2.0);
-
+            */
             if let Some((e, maybe_rock)) = collisions
                 .get(e.0.entity1)
                 .ok()
