@@ -33,7 +33,7 @@
 // I'm not sure i like this 2018 idiom. Can debate it later.
 #![allow(elided_lifetimes_in_paths)]
 
-use animation::{AnimationIndices, maybe_change_animation};
+use animation::{maybe_change_animation, AnimationIndices};
 use bevy::{prelude::*, sprite::Anchor, window::WindowResolution};
 use bevy_asset_loader::prelude::*;
 use bevy_xpbd_2d::prelude::*;
@@ -165,13 +165,7 @@ fn main() {
     )
     .add_systems(
         Update,
-        (
-            player_animation,
-            paddle_ai, // .before(check_for_ball_collisions),
-            //ball_physics.before(check_for_ball_collisions),
-            //check_for_ball_collisions
-            check_for_gg,
-        )
+        (player_animation, paddle_ai, ball_collisions, check_for_gg)
             .run_if(in_state(GameState::Playing))
             .after(player_inputs),
     )
@@ -261,7 +255,8 @@ fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
             ..Default::default()
         },
         collider: Collider::capsule_endpoints(Vec2::new(-11.0, -8.0), Vec2::new(11.0, -8.0), 15.0),
-        rigid_body: RigidBody::Kinematic,
+        rigid_body: RigidBody::Static,
+        restitution: Restitution::new(1.0).with_combine_rule(CoefficientCombine::Max),
     });
 }
 
@@ -332,7 +327,7 @@ fn playing_setup(
         collider: Collider::capsule_endpoints(Vec2::new(-5.0, 0.0), Vec2::new(10.0, 0.0), 21.0),
         external_force: ExternalForce::ZERO,
         locked_axes: LockedAxes::new().lock_rotation(),
-        gravity_scale: GravityScale(1.0),
+        gravity_scale: GravityScale(0.0),
     };
     commands.spawn(pb);
 
@@ -394,9 +389,10 @@ fn playing_setup(
                 collider: Collider::capsule_endpoints(
                     Vec2::new(-20.0, 0.0),
                     Vec2::new(20.0, 0.0),
-                    if *image_index == 1 { 15.0 } else { 20.0 },
+                    if *image_index == 1 { 13.0 } else { 13.0 },
                 ),
-                rigid_body: RigidBody::Static,
+                rigid_body: RigidBody::Kinematic,
+                collision_layer: CollisionLayers::new([Layer::Rock], [Layer::Ball, Layer::Player, Layer::Wall])
             });
         }
     }
@@ -432,6 +428,17 @@ struct PaddleBundle {
     sprite: SpriteBundle,
     collider: Collider,
     rigid_body: RigidBody,
+    restitution: Restitution,
+}
+
+// Define the collision layers
+#[derive(PhysicsLayer)]
+enum Layer {
+    Ball,
+    Rock,
+    Player,
+    Wall,
+    Paddle,
 }
 
 #[derive(Component, Default)]
@@ -444,6 +451,7 @@ struct RockBundle {
     sprite: SpriteSheetBundle,
     collider: Collider,
     rigid_body: RigidBody,
+    collision_layer: CollisionLayers,
 }
 
 #[derive(Component, Default)]
@@ -458,13 +466,16 @@ struct BallBundle {
     rigid_body: RigidBody,
     linear_velocity: LinearVelocity,
     restitution: Restitution,
+    friction: Friction,
     gravity_scale: GravityScale,
+    collision_layer: CollisionLayers,
 }
 
 impl BallBundle {
     fn new(assets: &Res<'_, LDAssets>, rng: &mut Randomizer) -> BallBundle {
         // Randomize starting direction of ball
-        let angle = rng.rng.gen_range(0.0..TAU);
+        // let angle = rng.rng.gen_range(0.0..TAU);
+        let angle = TAU * 0.66;
         let rotation = Quat::from_axis_angle(Vec3::Z, angle);
         let start_velocity = rotation.mul_vec3(Vec3::new(BALL_SPEED, 0., 0.)).truncate();
 
@@ -476,17 +487,17 @@ impl BallBundle {
                     ..Default::default()
                 },
                 texture: assets.bomb.clone(),
-                transform: Transform {
-                    translation: BALL_START,
-                    ..default()
-                },
+                transform: Transform::from_translation(BALL_START),
                 ..default()
             },
             rigid_body: RigidBody::Dynamic,
             collider: Collider::ball(10.0),
             linear_velocity: LinearVelocity(start_velocity),
+            // external_force: ExternalForce::new(start_velocity * 10000.0).with_persistence(false),
             restitution: Restitution::new(1.0).with_combine_rule(CoefficientCombine::Max),
+            friction: Friction::ZERO,
             gravity_scale: GravityScale(0.0),
+            collision_layer: CollisionLayers::new([Layer::Ball], [Layer::Rock, Layer::Player, Layer::Paddle, Layer::Wall])
         }
     }
 }
@@ -531,6 +542,8 @@ struct WallBundle {
     sprite_bundle: SpriteBundle,
     collider: Collider,
     rigid_body: RigidBody,
+    restitution: Restitution,
+    collision_layer: CollisionLayers,
 }
 
 impl WallBundle {
@@ -554,6 +567,8 @@ impl WallBundle {
                 ..default()
             },
             collider: Collider::cuboid(location.size().x, location.size().y),
+            restitution: Restitution::new(1.0).with_combine_rule(CoefficientCombine::Max),
+            collision_layer: CollisionLayers::new([Layer::Wall], [Layer::Ball, Layer::Player, Layer::Rock]),
         }
     }
 }
@@ -586,13 +601,7 @@ fn player_input_map() -> InputMap<Action> {
 }
 
 fn player_inputs(
-    mut player_query: Query<
-        (
-            &mut LinearVelocity,
-            &ActionState<Action>,
-        ),
-        With<Player>,
-    >,
+    mut player_query: Query<(&mut LinearVelocity, &ActionState<Action>), With<Player>>,
 ) {
     let Ok((mut velocity, action_state)) = player_query.get_single_mut() else {
         return;
@@ -604,7 +613,7 @@ fn player_inputs(
     }
 
     if action_state.just_pressed(Action::Jump) {
-        // THIS IS NOT THE CORRECT WAY TO DO IT, SOLEN FROM: 
+        // THIS IS NOT THE CORRECT WAY TO DO IT, SOLEN FROM:
         // https://github.com/Jondolf/bevy_xpbd/blob/8b2ea8fd4754fb3ecd51f79fad282d22631d2c7f/crates/bevy_xpbd_2d/examples/one_way_platform_2d.rs#L152-L157
         if velocity.y.abs() < 0.2 {
             velocity.y = 400f32;
@@ -613,22 +622,6 @@ fn player_inputs(
 }
 
 /*
-fn ball_physics(
-    mut ball_query: Query<(&mut LinearVelocity, &mut Transform), With<Ball>>,
-    time: Res<Time>,
-) {
-    let Ok((velocity, mut transform)) = ball_query.get_single_mut() else {
-        return;
-    };
-
-    // TODO: Collision detection
-
-    let delta = time.delta().as_secs_f32();
-
-    transform.translation.y += velocity.y * delta;
-    transform.translation.x += velocity.x * delta;
-}
-
 fn check_for_ball_collisions(
     mut commands: Commands,
     mut ball_query: Query<(&mut Velocity, &Transform, &Size), With<Ball>>,
@@ -702,9 +695,7 @@ pub(crate) fn player_animation(
     >,
     player_animations: Res<PlayerAnimationTable>,
 ) {
-    let Ok((velocity, mut atlas, mut animation)) =
-        player_query.get_single_mut()
-    else {
+    let Ok((velocity, mut atlas, mut animation)) = player_query.get_single_mut() else {
         return;
     };
 
@@ -724,5 +715,27 @@ pub(crate) fn player_animation(
 
     if velocity.x.abs() > 0.2 {
         atlas.flip_x = velocity.x < 0.0;
+    }
+}
+
+fn ball_collisions(
+    mut commands: Commands,
+    mut ev: EventReader<CollisionStarted>,
+    mut ev_end: EventReader<CollisionEnded>,
+    balls: Query<&CollidingEntities, With<Ball>>,
+    rocks: Query<Entity, With<Rock>>,
+) {
+    for e in &mut ev_end {
+        info!("end b0: {:?}, b2 {:?}", balls.contains(e.0), balls.contains(e.1));
+    }
+    for e in &mut ev {
+        info!("start b0: {:?}, b1 {:?}", balls.contains(e.0), balls.contains(e.1));
+    }
+    for ball_collisions in &balls {
+        for collision in ball_collisions.iter() {
+            if let Ok(rock) = rocks.get(*collision) {
+                commands.entity(rock).despawn();
+            }
+        }
     }
 }
