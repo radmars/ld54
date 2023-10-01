@@ -573,7 +573,15 @@ fn player_input_map() -> InputMap<Action> {
         }),
         Action::Move,
     );
+    input_map.insert(
+        UserInput::VirtualAxis(VirtualAxis {
+            negative: GamepadButtonType::DPadLeft.into(),
+            positive: GamepadButtonType::DPadRight.into(),
+        }),
+        Action::Move,
+    );
     input_map.insert(KeyCode::Up, Action::Jump);
+    input_map.insert(GamepadButtonType::South, Action::Jump);
     input_map
 }
 
