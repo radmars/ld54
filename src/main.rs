@@ -39,6 +39,7 @@ use bevy_asset_loader::prelude::*;
 use iyes_progress::prelude::*;
 use leafwing_input_manager::{axislike::VirtualAxis, prelude::*};
 use rand::prelude::*;
+use std::f32::consts::TAU; // 2 pi
 
 const PLAYER_X_SPEED: f32 = 400.0;
 
@@ -59,10 +60,10 @@ const GAP_BETWEEN_ROCKS_AND_BOTTOM: f32 = 30.0;
 const GAP_BETWEEN_ROCKS_AND_SIDES: f32 = 30.0;
 const GAP_BETWEEN_ROCKS_AND_PADDLE: f32 = 200.0;
 
-mod animation;
+const BALL_START: Vec3 = Vec3::new(0.0, 200.0, 1.0);
+const BALL_SPEED: f32 = 400.0;
 
-#[derive(Component, Deref, DerefMut)]
-struct Velocity(Vec2);
+mod animation;
 
 #[derive(Resource)]
 struct PlayerAnimationTable {
@@ -152,7 +153,7 @@ fn main() {
     )
     .add_systems(
         Update,
-        (player_physics,)
+        (player_physics, ball_physics)
             .run_if(in_state(GameState::Playing))
             .after(player_inputs),
     )
@@ -252,26 +253,23 @@ fn playing_setup(
     };
     commands.spawn(pb);
 
+    // Randomize starting direction of ball
+    let angle = rng.rng.gen_range(0.0..TAU);
+    let rotation = Quat::from_axis_angle(Vec3::Z, angle);
+    let start_velocity = rotation.mul_vec3(Vec3::new(BALL_SPEED, 0., 0.)).truncate();
+
     commands.spawn(BallBundle {
         ball: Ball {},
-        sprite: SpriteSheetBundle {
-            texture_atlas: assets.bomb.clone(),
+        sprite: SpriteBundle {
+            texture: assets.bomb.clone(),
             transform: Transform {
-                translation: Vec3::new(
-                    0.,
-                    0.,
-                    1.,
-                ),
+                translation: BALL_START,
+                rotation,
                 ..default()
             },
             ..default()
         },
-        velocity: Velocity(
-            Vec2 {
-                x: 20.,
-                y: 20.,
-            }
-        ),
+        velocity: Velocity(start_velocity),
     });
 
     // Spawn as many rocks as we can given the boundaries defined by the constants
@@ -352,7 +350,6 @@ struct Rock {}
 
 #[derive(Bundle, Default)]
 struct RockBundle {
-struct RockBundle {
     rock: Rock,
     #[bundle()]
     sprite: SpriteSheetBundle,
@@ -368,7 +365,7 @@ struct Ball {}
 struct BallBundle {
     ball: Ball,
     #[bundle()]
-    sprite: SpriteSheetBundle,
+    sprite: SpriteBundle,
     velocity: Velocity,
 }
 
@@ -397,9 +394,7 @@ fn maybe_change_animation(target: &mut AnimationIndices, source: &AnimationIndic
     }
 }
 
-fn player_inputs(
-    mut player_query: Query<(&mut Velocity, &ActionState<Action>), With<Player>>,
-) {
+fn player_inputs(mut player_query: Query<(&mut Velocity, &ActionState<Action>), With<Player>>) {
     let Ok((mut velocity, action_state)) = player_query.get_single_mut() else {
         return;
     };
@@ -462,4 +457,20 @@ fn player_physics(
     }
     transform.translation.x = (transform.translation.x + velocity.x * delta).clamp(-380.0, 380.0);
     atlas.flip_x = velocity.x < 0.0;
+}
+
+fn ball_physics(
+    mut ball_query: Query<(&mut Velocity, &mut Transform), With<Ball>>,
+    time: Res<Time>,
+) {
+    let Ok((velocity, mut transform)) = ball_query.get_single_mut() else {
+        return;
+    };
+
+    // TODO: Collision detection
+
+    let delta = time.delta().as_secs_f32();
+
+    transform.translation.y += velocity.y * delta;
+    transform.translation.x += velocity.x * delta;
 }
