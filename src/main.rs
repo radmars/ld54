@@ -47,7 +47,8 @@ use std::f32::consts::TAU; // 2 pi
 
 const PLAYER_X_SPEED: f32 = 400.0;
 
-const PADDLE_SIZE: Vec3 = Vec3::new(100.0, 20.0, 0.0);
+const PADDLE_SIZE: Vec2 = Vec2::new(64.0, 50.0);
+const PADDLE_SPEED: f32 = 200.0;
 
 const LEFT_WALL: f32 = -400.0;
 const RIGHT_WALL: f32 = 400.0;
@@ -244,25 +245,37 @@ fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
             ..Default::default()
         },
         collider: Collider,
+        size: Size(PADDLE_SIZE),
     });
 }
 
-fn paddle_ai(time: Res<Time>, mut paddle_query: Query<(&mut Paddle, &mut Transform)>) {
+fn paddle_ai(
+    time: Res<Time>,
+    mut paddle_query: Query<(&mut Paddle, &mut Transform), Without<Ball>>,
+    mut ball_query: Query<(&Ball, &Transform), Without<Paddle>>,
+) {
     let Ok((mut paddle, mut transform)) = paddle_query.get_single_mut() else {
         return;
     };
+    let Ok((_ball, ball_transform)) = ball_query.get_single_mut() else {
+        return;
+    };
 
-    let amount = 200.0 * time.delta().as_secs_f32();
+    let amount = PADDLE_SPEED * time.delta().as_secs_f32();
+
+    if transform.translation.x > ball_transform.translation.x {
+        paddle.left = true;
+    } else {
+        paddle.left = false;
+    }
 
     if paddle.left {
-        transform.translation.x -= amount;
-        if transform.translation.x < -350.0 {
-            paddle.left = false;
+        if transform.translation.x - PADDLE_SIZE.x / 2. > LEFT_WALL {
+            transform.translation.x -= amount;
         }
     } else {
-        transform.translation.x += amount;
-        if transform.translation.x > 350.0 {
-            paddle.left = true;
+        if transform.translation.x + PADDLE_SIZE.x / 2. < RIGHT_WALL {
+            transform.translation.x += amount;
         }
     }
 }
@@ -303,9 +316,10 @@ fn playing_setup(
             ..default()
         },
         animation_indices: idle_player,
-        player: Player::default(),
+        player: Player,
         velocity: Velocity(Vec2::ZERO),
         collider: Collider,
+        size: Size(Vec2::new(64., 70.)),
     };
     commands.spawn(pb);
 
@@ -326,6 +340,7 @@ fn playing_setup(
             ..default()
         },
         velocity: Velocity(start_velocity),
+        size: Size(Vec2::new(24., 22.)),
     });
 
     // Spawn as many rocks as we can given the boundaries defined by the constants
@@ -382,16 +397,21 @@ fn playing_setup(
                 },
                 rock: Rock,
                 collider: Collider,
+                size: Size(Vec2::new(ROCK_WIDTH, ROCK_HEIGHT)),
             });
         }
     }
 }
 
+// I'd rather just pull this from the image metadata, but I can't figure out how to do so.
+#[derive(Component, Deref, DerefMut)]
+struct Size(Vec2);
+
 #[derive(Component)]
 struct Collider;
 
 #[derive(Component, Default)]
-struct Player {}
+struct Player;
 
 #[derive(Bundle)]
 struct PlayerBundle {
@@ -403,6 +423,7 @@ struct PlayerBundle {
     animation_indices: AnimationIndices,
     velocity: Velocity,
     collider: Collider,
+    size: Size,
 }
 
 #[derive(Component)]
@@ -416,6 +437,7 @@ struct PaddleBundle {
     #[bundle()]
     sprite: SpriteBundle,
     collider: Collider,
+    size: Size,
 }
 
 #[derive(Component, Default)]
@@ -427,6 +449,7 @@ struct RockBundle {
     #[bundle()]
     sprite: SpriteSheetBundle,
     collider: Collider,
+    size: Size,
 }
 
 #[derive(Component, Deref, DerefMut)]
@@ -441,6 +464,7 @@ struct BallBundle {
     #[bundle()]
     sprite: SpriteBundle,
     velocity: Velocity,
+    size: Size,
 }
 
 enum WallLocation {
@@ -482,6 +506,7 @@ impl WallLocation {
 struct WallBundle {
     sprite_bundle: SpriteBundle,
     collider: Collider,
+    size: Size,
 }
 
 impl WallBundle {
@@ -504,6 +529,7 @@ impl WallBundle {
                 ..default()
             },
             collider: Collider,
+            size: Size(location.size()),
         }
     }
 }
@@ -602,7 +628,7 @@ fn ball_physics(
     mut ball_query: Query<(&mut Velocity, &mut Transform), With<Ball>>,
     time: Res<Time>,
 ) {
-    let Ok((mut velocity, mut transform)) = ball_query.get_single_mut() else {
+    let Ok((velocity, mut transform)) = ball_query.get_single_mut() else {
         return;
     };
 
@@ -616,24 +642,22 @@ fn ball_physics(
 
 fn check_for_collisions(
     mut commands: Commands,
-    mut ball_query: Query<(&mut Velocity, &Transform), With<Ball>>,
-    collider_query: Query<(Entity, &Transform, Option<&Rock>), With<Collider>>,
+    mut ball_query: Query<(&mut Velocity, &Transform, &Size), With<Ball>>,
+    collider_query: Query<(Entity, &Transform, &Size, Option<&Rock>), With<Collider>>,
 ) {
-    let (mut ball_velocity, ball_transform) = ball_query.single_mut();
-    let ball_size = ball_transform.scale.truncate();
+    let (mut ball_velocity, ball_transform, ball_size) = ball_query.single_mut();
 
     // check if the ball has collided with any other entity
-    for (collider_entity, transform, maybe_brick) in &collider_query {
+    for (collider_entity, transform, size, maybe_rock) in &collider_query {
         let collision = collide(
             ball_transform.translation,
-            ball_size,
+            ball_size.0, // Is there a more elegant way of accessing the Vec2 within the Size?
             transform.translation,
-            transform.scale.truncate(),
+            size.0,
         );
         if let Some(collision) = collision {
-            info!("Collision!");
-            // Bricks should be despawned
-            if maybe_brick.is_some() {
+            // Rocks should be despawned
+            if maybe_rock.is_some() {
                 commands.entity(collider_entity).despawn();
             }
 
@@ -648,9 +672,7 @@ fn check_for_collisions(
                 Collision::Right => reflect_x = ball_velocity.x < 0.0,
                 Collision::Top => reflect_y = ball_velocity.y < 0.0,
                 Collision::Bottom => reflect_y = ball_velocity.y > 0.0,
-                Collision::Inside => {
-                    info!("Inside!") /* do nothing */
-                }
+                Collision::Inside => { /* do nothing */ }
             }
 
             // reflect velocity on the x-axis if we hit something on the x-axis
