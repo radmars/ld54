@@ -251,6 +251,9 @@ struct LDAssets {
 
     #[asset(path = "bomb.png")]
     bomb: Handle<Image>,
+
+    #[asset(path = "jump.ogg")]
+    jump_sound: Handle<AudioSource>,
 }
 
 fn setup(mut commands: Commands, mut next_state: ResMut<NextState<GameState>>, config: Res<GameOptions>) {
@@ -783,6 +786,8 @@ fn player_input_map() -> InputMap<Action> {
 
 fn player_inputs(
     mut player_query: Query<(&mut LinearVelocity, &ActionState<Action>), With<Player>>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
 ) {
     let Ok((mut velocity, action_state)) = player_query.get_single_mut() else {
         return;
@@ -791,6 +796,10 @@ fn player_inputs(
     if action_state.pressed(Action::Move) {
         let x_amount = action_state.clamped_value(Action::Move);
         velocity.x = x_amount * PLAYER_X_SPEED;
+        commands.spawn(AudioBundle {
+            source: asset_server.load("audio/step1.ogg"),
+            ..default()
+        });
     }
 
     if action_state.just_pressed(Action::Jump) {
@@ -798,6 +807,11 @@ fn player_inputs(
         // https://github.com/Jondolf/bevy_xpbd/blob/8b2ea8fd4754fb3ecd51f79fad282d22631d2c7f/crates/bevy_xpbd_2d/examples/one_way_platform_2d.rs#L152-L157
         if velocity.y.abs() < 0.5 {
             velocity.y = 400f32;
+            commands.spawn(AudioBundle {
+                source: asset_server.load("audio/jump.ogg"),
+                ..default()
+            });
+            println!("JUMP!");
         }
     }
 }
@@ -854,6 +868,7 @@ fn ball_collisions(
     mut collision_end: EventReader<CollisionEnded>,
     balls: Query<Entity, With<Ball>>,
     collisions: Query<(Entity, Option<&RockSensor>, Option<&Wall>), With<Collider>>,
+    assets: Res<LDAssets>,
 ) {
     for e in &mut collision_end {
         let maybe_ball = balls.get(e.0).ok().or_else(|| balls.get(e.1).ok());
@@ -866,11 +881,20 @@ fn ball_collisions(
             {
                 if let Some(rock) = maybe_rock {
                     commands.entity(rock.target).despawn_recursive();
+                    commands.spawn(AudioBundle {
+                        source: assets.jump_sound.clone(),
+                        ..default()
+                    });
                 }
 
                 if let Some(wall) = maybe_wall {
                     if wall.ball_destroyer {
                         commands.entity(ball).despawn_recursive();
+                    } else {
+                        commands.spawn(AudioBundle {
+                            source: assets.jump_sound.clone(),
+                            ..default()
+                        });
                     }
                 }
             }
