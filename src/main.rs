@@ -153,7 +153,7 @@ fn main() {
     )
     .add_systems(
         Update,
-        (player_physics, ball_physics)
+        (player_physics, paddle_ai, ball_physics)
             .run_if(in_state(GameState::Playing))
             .after(player_inputs),
     )
@@ -182,6 +182,9 @@ struct LDAssets {
     #[asset(texture_atlas(tile_size_x = 64.0, tile_size_y = 64.0, columns = 1, rows = 2))]
     #[asset(path = "rocks.png")]
     rocks: Handle<TextureAtlas>,
+
+    #[asset(path = "paddle.png")]
+    paddle: Handle<Image>,
 
     #[asset(path = "gamebg.png")]
     gamebg: Handle<Image>,
@@ -218,6 +221,37 @@ fn wait_to_start(k: Res<Input<KeyCode>>, mut next_state: ResMut<NextState<GameSt
     }
 }
 
+fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
+    commands.spawn(PaddleBundle {
+        paddle: Paddle { left: true },
+        sprite: SpriteBundle {
+            texture: assets.paddle.clone(),
+            transform: Transform::from_translation(Vec3::new(0.0, 270.0, 4.0)),
+            ..Default::default()
+        },
+    });
+}
+
+fn paddle_ai(time: Res<Time>, mut paddle_query: Query<(&mut Paddle, &mut Transform)>) {
+    let Ok((mut paddle, mut transform)) = paddle_query.get_single_mut() else {
+        return;
+    };
+
+    let amount = 200.0 * time.delta().as_secs_f32();
+
+    if paddle.left {
+        transform.translation.x -= amount;
+        if transform.translation.x < -350.0 {
+            paddle.left = false;
+        }
+    } else {
+        transform.translation.x += amount;
+        if transform.translation.x > 350.0 {
+            paddle.left = true;
+        }
+    }
+}
+
 fn playing_setup(
     assets: Res<LDAssets>,
     mut rng: ResMut<Randomizer>,
@@ -225,11 +259,12 @@ fn playing_setup(
     player_animations: Res<PlayerAnimationTable>,
 ) {
     let paddle_y = TOP_WALL - GAP_BETWEEN_PADDLE_AND_TOP - PADDLE_SIZE.y;
-
     commands.spawn(SpriteBundle {
         texture: assets.gamebg.clone(),
         ..default()
     });
+
+    spawn_paddle(&mut commands, &assets);
 
     let idle_player = player_animations.idle.clone();
 
@@ -343,6 +378,18 @@ struct PlayerBundle {
     sprite: SpriteSheetBundle,
     animation_indices: AnimationIndices,
     velocity: Velocity,
+}
+
+#[derive(Component)]
+struct Paddle {
+    left: bool,
+}
+
+#[derive(Bundle)]
+struct PaddleBundle {
+    paddle: Paddle,
+    #[bundle()]
+    sprite: SpriteBundle,
 }
 
 #[derive(Component, Default)]
