@@ -33,6 +33,9 @@
 // I'm not sure i like this 2018 idiom. Can debate it later.
 #![allow(elided_lifetimes_in_paths)]
 
+use std::f32::consts::PI;
+use std::time::Duration;
+
 use animation::{maybe_change_animation, AnimationIndices};
 use bevy::{prelude::*, sprite::Anchor, window::WindowResolution};
 use bevy_asset_loader::prelude::*;
@@ -40,10 +43,10 @@ use bevy_xpbd_2d::prelude::*;
 use iyes_progress::prelude::*;
 use leafwing_input_manager::{axislike::VirtualAxis, prelude::*};
 use rand::prelude::*;
-use std::f32::consts::TAU; // 2 pi
 
 const PLAYER_X_SPEED: f32 = 220.0;
 
+const PADDLE_START: Vec3 = Vec3::new(0.0, 270.0, 4.0);
 const PADDLE_SIZE: Vec2 = Vec2::new(64.0, 50.0);
 const PADDLE_SPEED: f32 = 200.0;
 
@@ -64,8 +67,8 @@ const GAP_BETWEEN_ROCKS_AND_BOTTOM: f32 = 30.0;
 const GAP_BETWEEN_ROCKS_AND_SIDES: f32 = 30.0;
 const GAP_BETWEEN_ROCKS_AND_PADDLE: f32 = 200.0;
 
-const BALL_START: Vec3 = Vec3::new(0.0, 200.0, 1.0);
 const BALL_SPEED: f32 = 250.0;
+const BALL_SPAWN_INTERVAL: f32 = 10.0;
 
 mod animation;
 
@@ -153,6 +156,7 @@ fn main() {
     .insert_resource(PhysicsDebugConfig::all())
     .insert_resource(Gravity(Vec2::new(0.0, -800.0)))
     .insert_resource(SubstepCount(30))
+    .insert_resource(BallSpawnTimer::default())
     .add_systems(Update, bevy::window::close_on_esc)
     .add_systems(Update, (wait_to_start).run_if(in_state(GameState::Splash)))
     .add_systems(OnEnter(GameState::Setup), setup)
@@ -168,7 +172,8 @@ fn main() {
     .add_systems(Update, ball_collisions.run_if(in_state(GameState::Playing)))
     .add_systems(
         Update,
-        (player_animation, paddle_ai, check_for_gg).run_if(in_state(GameState::Playing)),
+        (player_animation, paddle_ai, check_for_gg, spawn_ball)
+            .run_if(in_state(GameState::Playing)),
     )
     .run();
 }
@@ -252,7 +257,7 @@ fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
         paddle: Paddle { left: true },
         sprite: SpriteBundle {
             texture: assets.paddle.clone(),
-            transform: Transform::from_translation(Vec3::new(0.0, 270.0, 4.0)),
+            transform: Transform::from_translation(PADDLE_START),
             ..Default::default()
         },
         collider: Collider::capsule_endpoints(Vec2::new(-11.0, -8.0), Vec2::new(11.0, -8.0), 15.0),
@@ -337,7 +342,7 @@ fn playing_setup(
     };
     commands.spawn(pb);
 
-    commands.spawn(BallBundle::new(&assets));
+    commands.spawn(BallBundle::new(&assets, &mut rng, PADDLE_START));
 
     // Spawn as many rocks as we can given the boundaries defined by the constants
     let total_width_of_rocks = (RIGHT_WALL - LEFT_WALL) - 2. * GAP_BETWEEN_ROCKS_AND_SIDES;
@@ -489,12 +494,11 @@ struct BallBundle {
 }
 
 impl BallBundle {
-    fn new(assets: &Res<LDAssets>) -> BallBundle {
+    fn new(assets: &Res<LDAssets>, rng: &mut Randomizer, paddle_location: Vec3) -> BallBundle {
         // Randomize starting direction of ball
-        // let angle = rng.rng.gen_range(0.0..TAU);
-        let angle = TAU * 0.66;
+        let angle = rng.rng.gen_range(-PI / 4...PI / 4.);
         let rotation = Quat::from_axis_angle(Vec3::Z, angle);
-        let start_velocity = rotation.mul_vec3(Vec3::new(BALL_SPEED, 0., 0.)).truncate();
+        let start_velocity = rotation.mul_vec3(Vec3::new(0., -BALL_SPEED, 0.)).truncate();
 
         BallBundle {
             ball: Ball,
@@ -504,7 +508,9 @@ impl BallBundle {
                     ..Default::default()
                 },
                 texture: assets.bomb.clone(),
-                transform: Transform::from_translation(BALL_START),
+                transform: Transform::from_translation(
+                    paddle_location + Vec3::new(0., (-PADDLE_SIZE.y / 2.) - 10., 0.),
+                ),
                 ..default()
             },
             rigid_body: RigidBody::Dynamic,
@@ -519,6 +525,37 @@ impl BallBundle {
                 [Layer::Rock, Layer::Player, Layer::Paddle, Layer::Wall],
             ),
         }
+    }
+}
+
+#[derive(Resource)]
+struct BallSpawnTimer(Timer);
+
+impl Default for BallSpawnTimer {
+    fn default() -> Self {
+        BallSpawnTimer(Timer::new(
+            Duration::from_secs_f32(BALL_SPAWN_INTERVAL),
+            TimerMode::Repeating,
+        ))
+    }
+}
+
+fn spawn_ball(
+    time: Res<Time>,
+    assets: Res<LDAssets>,
+    mut rng: ResMut<Randomizer>,
+    mut ball_timer: ResMut<BallSpawnTimer>,
+    mut commands: Commands,
+    paddle: Query<&Transform, With<Paddle>>,
+) {
+    let Ok(paddle_xform) = paddle.get_single() else {
+        return;
+    };
+
+    ball_timer.0.tick(time.delta());
+
+    if ball_timer.0.just_finished() {
+        commands.spawn(BallBundle::new(&assets, &mut rng, paddle_xform.translation));
     }
 }
 
