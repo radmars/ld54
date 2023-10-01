@@ -219,7 +219,7 @@ struct LDAssets {
 
 fn setup(mut commands: Commands, mut next_state: ResMut<NextState<GameState>>) {
     commands.spawn(Camera2dBundle::default());
-    next_state.set(GameState::Playing);
+    next_state.set(GameState::Splash);
 }
 
 fn splash_setup(assets: Res<LDAssets>, mut commands: Commands) {
@@ -247,7 +247,7 @@ fn remove_all_sprites(
 }
 
 fn wait_to_start(k: Res<Input<KeyCode>>, mut next_state: ResMut<NextState<GameState>>) {
-    if k.just_pressed(KeyCode::J) {
+    if k.just_pressed(KeyCode::Space) {
         next_state.set(GameState::Playing);
     }
 }
@@ -793,7 +793,7 @@ fn ball_collisions(
             .or_else(|| balls.get(e.1).ok());
 
         if let Some(ball) = maybe_ball {
-            if let Some((e, maybe_rock, maybe_wall)) = collisions
+            if let Some((_, maybe_rock, maybe_wall)) = collisions
                 .get(e.0)
                 .ok()
                 .or_else(|| collisions.get(e.1).ok())
