@@ -163,11 +163,12 @@ fn main() {
         Update,
         (player_inputs, animation::animate).run_if(in_state(GameState::Playing)),
     )
+    .add_systems(Update, ball_collisions.run_if(in_state(GameState::Playing)))
     .add_systems(
         Update,
-        (player_animation, paddle_ai, ball_collisions, check_for_gg)
+        (player_animation, paddle_ai, check_for_gg)
             .run_if(in_state(GameState::Playing))
-            .after(player_inputs),
+            .after(PhysicsSet::StepSimulation),
     )
     .run();
 }
@@ -371,29 +372,7 @@ fn playing_setup(
             );
 
             let image_index = image_indices.choose(&mut rng.rng).unwrap();
-
-            commands.spawn(RockBundle {
-                sprite: SpriteSheetBundle {
-                    texture_atlas: assets.rocks.clone(),
-                    sprite: TextureAtlasSprite {
-                        index: *image_index,
-                        ..default()
-                    },
-                    transform: Transform {
-                        translation: rock_position.extend(1.0),
-                        ..default()
-                    },
-                    ..default()
-                },
-                rock: Rock,
-                collider: Collider::capsule_endpoints(
-                    Vec2::new(-20.0, 0.0),
-                    Vec2::new(20.0, 0.0),
-                    if *image_index == 1 { 13.0 } else { 13.0 },
-                ),
-                rigid_body: RigidBody::Kinematic,
-                collision_layer: CollisionLayers::new([Layer::Rock], [Layer::Ball, Layer::Player, Layer::Wall])
-            });
+            commands.spawn(RockBundle::new(&assets, image_index, rock_position));
         }
     }
 }
@@ -452,6 +431,42 @@ struct RockBundle {
     collider: Collider,
     rigid_body: RigidBody,
     collision_layer: CollisionLayers,
+    sensor: Sensor,
+}
+
+impl RockBundle {
+    fn new(assets: &Res<LDAssets>, image_index: &usize, rock_position: Vec2) -> RockBundle {
+        RockBundle {
+            sprite: SpriteSheetBundle {
+                texture_atlas: assets.rocks.clone(),
+                sprite: TextureAtlasSprite {
+                    index: *image_index,
+                    ..default()
+                },
+                transform: Transform {
+                    translation: rock_position.extend(1.0),
+                    ..default()
+                },
+                ..default()
+            },
+            rock: Rock,
+            /*
+            collider: Collider::capsule_endpoints(
+                Vec2::new(-20.0, 0.0),
+                Vec2::new(20.0, 0.0),
+                13.0,
+                // if *image_index == 1 { 13.0 } else { 13.0 },
+            ),
+            */
+            collider: Collider::cuboid(60.0, if *image_index == 1 { 18.0 } else { 25.0 }),
+            rigid_body: RigidBody::Static,
+            collision_layer: CollisionLayers::new(
+                [Layer::Rock],
+                [Layer::Ball, Layer::Player, Layer::Wall],
+            ),
+            sensor: Sensor,
+        }
+    }
 }
 
 #[derive(Component, Default)]
@@ -497,7 +512,10 @@ impl BallBundle {
             restitution: Restitution::new(1.0).with_combine_rule(CoefficientCombine::Max),
             friction: Friction::ZERO,
             gravity_scale: GravityScale(0.0),
-            collision_layer: CollisionLayers::new([Layer::Ball], [Layer::Rock, Layer::Player, Layer::Paddle, Layer::Wall])
+            collision_layer: CollisionLayers::new(
+                [Layer::Ball],
+                [Layer::Rock, Layer::Player, Layer::Paddle, Layer::Wall],
+            ),
         }
     }
 }
@@ -568,7 +586,10 @@ impl WallBundle {
             },
             collider: Collider::cuboid(location.size().x, location.size().y),
             restitution: Restitution::new(1.0).with_combine_rule(CoefficientCombine::Max),
-            collision_layer: CollisionLayers::new([Layer::Wall], [Layer::Ball, Layer::Player, Layer::Rock]),
+            collision_layer: CollisionLayers::new(
+                [Layer::Wall],
+                [Layer::Ball, Layer::Player, Layer::Rock],
+            ),
         }
     }
 }
@@ -720,21 +741,31 @@ pub(crate) fn player_animation(
 
 fn ball_collisions(
     mut commands: Commands,
-    mut ev: EventReader<CollisionStarted>,
-    mut ev_end: EventReader<CollisionEnded>,
-    balls: Query<&CollidingEntities, With<Ball>>,
+    // mut ev: EventReader<CollisionStarted>,
+    // mut ev_end: EventReader<CollisionEnded>,
+    mut ev_mid: EventReader<Collision>,
+    balls: Query<Entity, With<Ball>>,
+    mut linear_velocity: Query<&mut LinearVelocity>,
     rocks: Query<Entity, With<Rock>>,
 ) {
-    for e in &mut ev_end {
-        info!("end b0: {:?}, b2 {:?}", balls.contains(e.0), balls.contains(e.1));
-    }
-    for e in &mut ev {
-        info!("start b0: {:?}, b1 {:?}", balls.contains(e.0), balls.contains(e.1));
-    }
-    for ball_collisions in &balls {
-        for collision in ball_collisions.iter() {
-            if let Ok(rock) = rocks.get(*collision) {
-                commands.entity(rock).despawn();
+    for e in &mut ev_mid {
+        let maybe_ball = balls
+            .get(e.0.entity1)
+            .ok()
+            .or_else(|| balls.get(e.0.entity2).ok());
+
+        if let Some(mut ball_v) = maybe_ball.and_then(|b| linear_velocity.get_mut(b).ok()) {
+            if let Some(rock) = rocks
+                .get(e.0.entity1)
+                .ok()
+                .or_else(|| rocks.get(e.0.entity2).ok())
+            {
+                let m = e.0.manifolds.first().unwrap();
+                let first = balls.contains(e.0.entity1);
+                let normal_normal =if first { m.normal1 } else { - m.normal1 };
+                ball_v.0 = ball_v.0 - (ball_v.0.dot(normal_normal) * normal_normal * 2.0);
+
+                commands.entity(rock).despawn_recursive();
             }
         }
     }
