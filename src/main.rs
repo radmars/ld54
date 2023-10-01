@@ -33,13 +33,10 @@
 // I'm not sure i like this 2018 idiom. Can debate it later.
 #![allow(elided_lifetimes_in_paths)]
 
-use animation::{animate, AnimationIndices};
-use bevy::{
-    prelude::*,
-    sprite::collide_aabb::{collide, Collision},
-    window::WindowResolution,
-};
+use animation::{AnimationIndices, maybe_change_animation};
+use bevy::{prelude::*, sprite::Anchor, window::WindowResolution};
 use bevy_asset_loader::prelude::*;
+use bevy_xpbd_2d::prelude::*;
 use iyes_progress::prelude::*;
 use leafwing_input_manager::{axislike::VirtualAxis, prelude::*};
 use rand::prelude::*;
@@ -71,7 +68,6 @@ const BALL_START: Vec3 = Vec3::new(0.0, 200.0, 1.0);
 const BALL_SPEED: f32 = 250.0;
 
 mod animation;
-mod player_physics;
 
 #[derive(Resource)]
 struct PlayerAnimationTable {
@@ -123,7 +119,7 @@ fn main() {
             .set(ImagePlugin::default_nearest()),
         loading_plugin,
         InputManagerPlugin::<Action>::default(),
-        //  PhysicsPlugins::default(),
+        PhysicsPlugins::default(),
     ))
     .add_loading_state(loading_state)
     .add_collection_to_loading_state::<_, LDAssets>(loading_game_state)
@@ -153,6 +149,8 @@ fn main() {
     .insert_resource(Msaa::Off)
     .insert_resource(ClearColor(Color::hex("#000000").unwrap()))
     .insert_resource(Randomizer::default())
+    .insert_resource(PhysicsDebugConfig::all())
+    .insert_resource(Gravity(Vec2::new(0.0, -800.0)))
     .add_systems(Update, bevy::window::close_on_esc)
     .add_systems(Update, (wait_to_start).run_if(in_state(GameState::Splash)))
     .add_systems(OnEnter(GameState::Setup), setup)
@@ -163,15 +161,15 @@ fn main() {
     .add_systems(OnEnter(GameState::Playing), playing_setup)
     .add_systems(
         Update,
-        (player_inputs, animate).run_if(in_state(GameState::Playing)),
+        (player_inputs, animation::animate).run_if(in_state(GameState::Playing)),
     )
     .add_systems(
         Update,
         (
-            player_physics::player_physics.before(check_for_ball_collisions),
-            paddle_ai.before(check_for_ball_collisions),
-            ball_physics.before(check_for_ball_collisions),
-            check_for_ball_collisions,
+            player_animation,
+            paddle_ai, // .before(check_for_ball_collisions),
+            //ball_physics.before(check_for_ball_collisions),
+            //check_for_ball_collisions
             check_for_gg,
         )
             .run_if(in_state(GameState::Playing))
@@ -221,7 +219,7 @@ struct LDAssets {
 
 fn setup(mut commands: Commands, mut next_state: ResMut<NextState<GameState>>) {
     commands.spawn(Camera2dBundle::default());
-    next_state.set(GameState::Splash);
+    next_state.set(GameState::Playing);
 }
 
 fn splash_setup(assets: Res<LDAssets>, mut commands: Commands) {
@@ -238,7 +236,10 @@ fn gg_setup(assets: Res<LDAssets>, mut commands: Commands) {
     });
 }
 
-fn remove_all_sprites(mut commands: Commands, things_to_remove: Query<Entity, Or<(With<Sprite>, With<TextureAtlasSprite>)>>) {
+fn remove_all_sprites(
+    mut commands: Commands,
+    things_to_remove: Query<Entity, Or<(With<Sprite>, With<TextureAtlasSprite>)>>,
+) {
     for thing_to_remove in &things_to_remove {
         let mut entity_commands = commands.entity(thing_to_remove);
         entity_commands.despawn();
@@ -259,8 +260,8 @@ fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
             transform: Transform::from_translation(Vec3::new(0.0, 270.0, 4.0)),
             ..Default::default()
         },
-        collider: Collider,
-        size: Size(PADDLE_SIZE),
+        collider: Collider::capsule_endpoints(Vec2::new(-11.0, -8.0), Vec2::new(11.0, -8.0), 15.0),
+        rigid_body: RigidBody::Kinematic,
     });
 }
 
@@ -278,20 +279,14 @@ fn paddle_ai(
 
     let amount = PADDLE_SPEED * time.delta().as_secs_f32();
 
-    if transform.translation.x > ball_transform.translation.x {
-        paddle.left = true;
-    } else {
-        paddle.left = false;
-    }
+    paddle.left = transform.translation.x > ball_transform.translation.x;
 
     if paddle.left {
         if transform.translation.x - PADDLE_SIZE.x / 2. > LEFT_WALL {
             transform.translation.x -= amount;
         }
-    } else {
-        if transform.translation.x + PADDLE_SIZE.x / 2. < RIGHT_WALL {
-            transform.translation.x += amount;
-        }
+    } else if transform.translation.x + PADDLE_SIZE.x / 2. < RIGHT_WALL {
+        transform.translation.x += amount;
     }
 }
 
@@ -321,6 +316,7 @@ fn playing_setup(
             texture_atlas: assets.player.clone(),
             sprite: TextureAtlasSprite {
                 index: idle_player.first,
+                anchor: Anchor::Custom(Vec2::new(-0.1, -0.2)),
                 ..default()
             },
             transform: Transform::from_translation(Vec3::new(0.0, 100.0, 1.0)),
@@ -332,31 +328,15 @@ fn playing_setup(
         },
         animation_indices: idle_player,
         player: Player,
-        velocity: Velocity(Vec2::ZERO),
-        collider: Collider,
-        size: Size(Vec2::new(64., 70.)),
+        rigid_body: RigidBody::Dynamic,
+        collider: Collider::capsule_endpoints(Vec2::new(-5.0, 0.0), Vec2::new(10.0, 0.0), 21.0),
+        external_force: ExternalForce::ZERO,
+        locked_axes: LockedAxes::new().lock_rotation(),
+        gravity_scale: GravityScale(1.0),
     };
     commands.spawn(pb);
 
-    // Randomize starting direction of ball
-    let angle = rng.rng.gen_range(0.0..TAU);
-    let rotation = Quat::from_axis_angle(Vec3::Z, angle);
-    let start_velocity = rotation.mul_vec3(Vec3::new(BALL_SPEED, 0., 0.)).truncate();
-
-    commands.spawn(BallBundle {
-        ball: Ball,
-        sprite: SpriteBundle {
-            texture: assets.bomb.clone(),
-            transform: Transform {
-                translation: BALL_START,
-                rotation,
-                ..default()
-            },
-            ..default()
-        },
-        velocity: Velocity(start_velocity),
-        size: Size(Vec2::new(24., 22.)),
-    });
+    commands.spawn(BallBundle::new(&assets, &mut rng));
 
     // Spawn as many rocks as we can given the boundaries defined by the constants
     let total_width_of_rocks = (RIGHT_WALL - LEFT_WALL) - 2. * GAP_BETWEEN_ROCKS_AND_SIDES;
@@ -411,19 +391,16 @@ fn playing_setup(
                     ..default()
                 },
                 rock: Rock,
-                collider: Collider,
-                size: Size(Vec2::new(ROCK_WIDTH, ROCK_HEIGHT)),
+                collider: Collider::capsule_endpoints(
+                    Vec2::new(-20.0, 0.0),
+                    Vec2::new(20.0, 0.0),
+                    if *image_index == 1 { 15.0 } else { 20.0 },
+                ),
+                rigid_body: RigidBody::Static,
             });
         }
     }
 }
-
-// I'd rather just pull this from the image metadata, but I can't figure out how to do so.
-#[derive(Component, Deref, DerefMut)]
-struct Size(Vec2);
-
-#[derive(Component)]
-struct Collider;
 
 #[derive(Component, Default)]
 struct Player;
@@ -436,9 +413,11 @@ struct PlayerBundle {
     #[bundle()]
     sprite: SpriteSheetBundle,
     animation_indices: AnimationIndices,
-    velocity: Velocity,
     collider: Collider,
-    size: Size,
+    rigid_body: RigidBody,
+    external_force: ExternalForce,
+    locked_axes: LockedAxes,
+    gravity_scale: GravityScale,
 }
 
 #[derive(Component)]
@@ -452,7 +431,7 @@ struct PaddleBundle {
     #[bundle()]
     sprite: SpriteBundle,
     collider: Collider,
-    size: Size,
+    rigid_body: RigidBody,
 }
 
 #[derive(Component, Default)]
@@ -464,11 +443,8 @@ struct RockBundle {
     #[bundle()]
     sprite: SpriteSheetBundle,
     collider: Collider,
-    size: Size,
+    rigid_body: RigidBody,
 }
-
-#[derive(Component, Deref, DerefMut)]
-struct Velocity(Vec2);
 
 #[derive(Component, Default)]
 struct Ball;
@@ -478,8 +454,41 @@ struct BallBundle {
     ball: Ball,
     #[bundle()]
     sprite: SpriteBundle,
-    velocity: Velocity,
-    size: Size,
+    collider: Collider,
+    rigid_body: RigidBody,
+    linear_velocity: LinearVelocity,
+    restitution: Restitution,
+    gravity_scale: GravityScale,
+}
+
+impl BallBundle {
+    fn new(assets: &Res<'_, LDAssets>, rng: &mut Randomizer) -> BallBundle {
+        // Randomize starting direction of ball
+        let angle = rng.rng.gen_range(0.0..TAU);
+        let rotation = Quat::from_axis_angle(Vec3::Z, angle);
+        let start_velocity = rotation.mul_vec3(Vec3::new(BALL_SPEED, 0., 0.)).truncate();
+
+        BallBundle {
+            ball: Ball,
+            sprite: SpriteBundle {
+                sprite: Sprite {
+                    anchor: Anchor::Custom(Vec2::new(0.0, -0.1)),
+                    ..Default::default()
+                },
+                texture: assets.bomb.clone(),
+                transform: Transform {
+                    translation: BALL_START,
+                    ..default()
+                },
+                ..default()
+            },
+            rigid_body: RigidBody::Dynamic,
+            collider: Collider::ball(10.0),
+            linear_velocity: LinearVelocity(start_velocity),
+            restitution: Restitution::new(1.0).with_combine_rule(CoefficientCombine::Max),
+            gravity_scale: GravityScale(0.0),
+        }
+    }
 }
 
 enum WallLocation {
@@ -521,7 +530,7 @@ impl WallLocation {
 struct WallBundle {
     sprite_bundle: SpriteBundle,
     collider: Collider,
-    size: Size,
+    rigid_body: RigidBody,
 }
 
 impl WallBundle {
@@ -529,6 +538,7 @@ impl WallBundle {
     // making our code easier to read and less prone to bugs when we change the logic
     fn new(location: WallLocation) -> WallBundle {
         WallBundle {
+            rigid_body: RigidBody::Static,
             sprite_bundle: SpriteBundle {
                 transform: Transform {
                     // We need to convert our Vec2 into a Vec3, by giving it a z-coordinate
@@ -543,8 +553,7 @@ impl WallBundle {
                 sprite: Sprite { ..default() },
                 ..default()
             },
-            collider: Collider,
-            size: Size(location.size()),
+            collider: Collider::cuboid(location.size().x, location.size().y),
         }
     }
 }
@@ -568,28 +577,36 @@ fn player_input_map() -> InputMap<Action> {
     input_map
 }
 
-fn player_inputs(mut player_query: Query<(&mut Velocity, &ActionState<Action>), With<Player>>) {
+fn player_inputs(
+    mut player_query: Query<
+        (
+            &mut LinearVelocity,
+            &ActionState<Action>,
+        ),
+        With<Player>,
+    >,
+) {
     let Ok((mut velocity, action_state)) = player_query.get_single_mut() else {
         return;
     };
 
     if action_state.pressed(Action::Move) {
         let x_amount = action_state.clamped_value(Action::Move);
-
-        velocity.x =
-            (velocity.x + (x_amount * PLAYER_X_SPEED)).clamp(-PLAYER_X_SPEED, PLAYER_X_SPEED);
-    } else {
-        velocity.x = 0.0;
+        velocity.x = x_amount * PLAYER_X_SPEED;
     }
 
-    if action_state.just_pressed(Action::Jump) && velocity.y.abs() < f32::EPSILON {
-        velocity.y = 1000.0;
+    if action_state.just_pressed(Action::Jump) {
+        // THIS IS NOT THE CORRECT WAY TO DO IT, SOLEN FROM: 
+        // https://github.com/Jondolf/bevy_xpbd/blob/8b2ea8fd4754fb3ecd51f79fad282d22631d2c7f/crates/bevy_xpbd_2d/examples/one_way_platform_2d.rs#L152-L157
+        if velocity.y.abs() < 0.2 {
+            velocity.y = 400f32;
+        }
     }
 }
 
-
+/*
 fn ball_physics(
-    mut ball_query: Query<(&mut Velocity, &mut Transform), With<Ball>>,
+    mut ball_query: Query<(&mut LinearVelocity, &mut Transform), With<Ball>>,
     time: Res<Time>,
 ) {
     let Ok((velocity, mut transform)) = ball_query.get_single_mut() else {
@@ -651,13 +668,53 @@ fn check_for_ball_collisions(
         }
     }
 }
+*/
 
-fn check_for_gg(player_xform: Query<&Transform, With<Player>>, mut next_state: ResMut<NextState<GameState>>) {
+fn check_for_gg(
+    player_xform: Query<&Transform, With<Player>>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
     let Ok(player_xform) = player_xform.get_single() else {
         return;
     };
 
-    if player_xform.translation.y < - 380.0 {
+    if player_xform.translation.y < -380.0 {
         next_state.set(GameState::GameOver);
+    }
+}
+
+pub(crate) fn player_animation(
+    mut player_query: Query<
+        (
+            &LinearVelocity,
+            &mut TextureAtlasSprite,
+            &mut AnimationIndices,
+        ),
+        With<Player>,
+    >,
+    player_animations: Res<PlayerAnimationTable>,
+) {
+    let Ok((velocity, mut atlas, mut animation)) =
+        player_query.get_single_mut()
+    else {
+        return;
+    };
+
+    // Priority is dealing with jump, then dealing with walk.
+
+    if velocity.y.abs() > 0.2 {
+        if velocity.y < 0.0 {
+            maybe_change_animation(&mut animation, &player_animations.jump_down);
+        } else {
+            maybe_change_animation(&mut animation, &player_animations.jump_up);
+        }
+    } else if velocity.x.abs() > 0.2 {
+        maybe_change_animation(&mut animation, &player_animations.walk);
+    } else {
+        maybe_change_animation(&mut animation, &player_animations.idle);
+    }
+
+    if velocity.x.abs() > 0.2 {
+        atlas.flip_x = velocity.x < 0.0;
     }
 }
