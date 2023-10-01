@@ -124,6 +124,7 @@ fn main() {
     .add_loading_state(loading_state)
     .add_collection_to_loading_state::<_, LDAssets>(loading_game_state)
     .add_state::<GameState>()
+    .insert_resource(PhysicsTimestep::Fixed(1.0 / 120.0))
     .insert_resource(PlayerAnimationTable {
         idle: AnimationIndices {
             first: 0,
@@ -151,6 +152,7 @@ fn main() {
     .insert_resource(Randomizer::default())
     .insert_resource(PhysicsDebugConfig::all())
     .insert_resource(Gravity(Vec2::new(0.0, -800.0)))
+    .insert_resource(SubstepCount(30))
     .add_systems(Update, bevy::window::close_on_esc)
     .add_systems(Update, (wait_to_start).run_if(in_state(GameState::Splash)))
     .add_systems(OnEnter(GameState::Setup), setup)
@@ -166,9 +168,7 @@ fn main() {
     .add_systems(Update, ball_collisions.run_if(in_state(GameState::Playing)))
     .add_systems(
         Update,
-        (player_animation, paddle_ai, check_for_gg)
-            .run_if(in_state(GameState::Playing))
-            .after(PhysicsSet::StepSimulation),
+        (player_animation, paddle_ai, check_for_gg).run_if(in_state(GameState::Playing)),
     )
     .run();
 }
@@ -258,6 +258,7 @@ fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
         collider: Collider::capsule_endpoints(Vec2::new(-11.0, -8.0), Vec2::new(11.0, -8.0), 15.0),
         rigid_body: RigidBody::Static,
         restitution: Restitution::new(1.0).with_combine_rule(CoefficientCombine::Max),
+        sensor: Sensor,
     });
 }
 
@@ -329,10 +330,14 @@ fn playing_setup(
         external_force: ExternalForce::ZERO,
         locked_axes: LockedAxes::new().lock_rotation(),
         gravity_scale: GravityScale(0.0),
+        collision_layer: CollisionLayers::new(
+            [Layer::Player],
+            [Layer::Rock, Layer::Wall, Layer::Paddle, Layer::Ball],
+        ),
     };
     commands.spawn(pb);
 
-    commands.spawn(BallBundle::new(&assets, &mut rng));
+    commands.spawn(BallBundle::new(&assets));
 
     // Spawn as many rocks as we can given the boundaries defined by the constants
     let total_width_of_rocks = (RIGHT_WALL - LEFT_WALL) - 2. * GAP_BETWEEN_ROCKS_AND_SIDES;
@@ -372,7 +377,7 @@ fn playing_setup(
             );
 
             let image_index = image_indices.choose(&mut rng.rng).unwrap();
-            commands.spawn(RockBundle::new(&assets, image_index, rock_position));
+            commands.spawn(RockBundle::new(&assets, *image_index, rock_position));
         }
     }
 }
@@ -393,6 +398,7 @@ struct PlayerBundle {
     external_force: ExternalForce,
     locked_axes: LockedAxes,
     gravity_scale: GravityScale,
+    collision_layer: CollisionLayers,
 }
 
 #[derive(Component)]
@@ -408,6 +414,7 @@ struct PaddleBundle {
     collider: Collider,
     rigid_body: RigidBody,
     restitution: Restitution,
+    sensor: Sensor,
 }
 
 // Define the collision layers
@@ -435,12 +442,12 @@ struct RockBundle {
 }
 
 impl RockBundle {
-    fn new(assets: &Res<LDAssets>, image_index: &usize, rock_position: Vec2) -> RockBundle {
+    fn new(assets: &Res<LDAssets>, image_index: usize, rock_position: Vec2) -> RockBundle {
         RockBundle {
             sprite: SpriteSheetBundle {
                 texture_atlas: assets.rocks.clone(),
                 sprite: TextureAtlasSprite {
-                    index: *image_index,
+                    index: image_index,
                     ..default()
                 },
                 transform: Transform {
@@ -450,15 +457,12 @@ impl RockBundle {
                 ..default()
             },
             rock: Rock,
-            /*
             collider: Collider::capsule_endpoints(
                 Vec2::new(-20.0, 0.0),
                 Vec2::new(20.0, 0.0),
-                13.0,
-                // if *image_index == 1 { 13.0 } else { 13.0 },
+                if image_index == 1 { 13.0 } else { 15.0 },
             ),
-            */
-            collider: Collider::cuboid(60.0, if *image_index == 1 { 18.0 } else { 25.0 }),
+            // collider: Collider::cuboid(60.0, if image_index == 1 { 18.0 } else { 25.0 }),
             rigid_body: RigidBody::Static,
             collision_layer: CollisionLayers::new(
                 [Layer::Rock],
@@ -487,7 +491,7 @@ struct BallBundle {
 }
 
 impl BallBundle {
-    fn new(assets: &Res<'_, LDAssets>, rng: &mut Randomizer) -> BallBundle {
+    fn new(assets: &Res<LDAssets>) -> BallBundle {
         // Randomize starting direction of ball
         // let angle = rng.rng.gen_range(0.0..TAU);
         let angle = TAU * 0.66;
@@ -562,6 +566,7 @@ struct WallBundle {
     rigid_body: RigidBody,
     restitution: Restitution,
     collision_layer: CollisionLayers,
+    sensor: Sensor,
 }
 
 impl WallBundle {
@@ -590,6 +595,7 @@ impl WallBundle {
                 [Layer::Wall],
                 [Layer::Ball, Layer::Player, Layer::Rock],
             ),
+            sensor: Sensor,
         }
     }
 }
@@ -642,56 +648,6 @@ fn player_inputs(
     }
 }
 
-/*
-fn check_for_ball_collisions(
-    mut commands: Commands,
-    mut ball_query: Query<(&mut Velocity, &Transform, &Size), With<Ball>>,
-    collider_query: Query<(Entity, &Transform, &Size, Option<&Rock>), With<Collider>>,
-) {
-    let (mut ball_velocity, ball_transform, ball_size) = ball_query.single_mut();
-
-    // check if the ball has collided with any other entity
-    for (collider_entity, transform, size, maybe_rock) in &collider_query {
-        let collision = collide(
-            ball_transform.translation,
-            ball_size.0, // Is there a more elegant way of accessing the Vec2 within the Size?
-            transform.translation,
-            size.0,
-        );
-        if let Some(collision) = collision {
-            // Rocks should be despawned
-            if maybe_rock.is_some() {
-                commands.entity(collider_entity).despawn();
-            }
-
-            // reflect the ball when it collides
-            let mut reflect_x = false;
-            let mut reflect_y = false;
-
-            // only reflect if the ball's velocity is going in the opposite direction of the
-            // collision
-            match collision {
-                Collision::Left => reflect_x = ball_velocity.x > 0.0,
-                Collision::Right => reflect_x = ball_velocity.x < 0.0,
-                Collision::Top => reflect_y = ball_velocity.y < 0.0,
-                Collision::Bottom => reflect_y = ball_velocity.y > 0.0,
-                Collision::Inside => { /* do nothing */ }
-            }
-
-            // reflect velocity on the x-axis if we hit something on the x-axis
-            if reflect_x {
-                ball_velocity.x = -ball_velocity.x;
-            }
-
-            // reflect velocity on the y-axis if we hit something on the y-axis
-            if reflect_y {
-                ball_velocity.y = -ball_velocity.y;
-            }
-        }
-    }
-}
-*/
-
 fn check_for_gg(
     player_xform: Query<&Transform, With<Player>>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -741,12 +697,10 @@ pub(crate) fn player_animation(
 
 fn ball_collisions(
     mut commands: Commands,
-    // mut ev: EventReader<CollisionStarted>,
-    // mut ev_end: EventReader<CollisionEnded>,
     mut ev_mid: EventReader<Collision>,
     balls: Query<Entity, With<Ball>>,
     mut linear_velocity: Query<&mut LinearVelocity>,
-    rocks: Query<Entity, With<Rock>>,
+    collisions: Query<(Entity, Option<&Rock>), With<Collider>>,
 ) {
     for e in &mut ev_mid {
         let maybe_ball = balls
@@ -755,17 +709,19 @@ fn ball_collisions(
             .or_else(|| balls.get(e.0.entity2).ok());
 
         if let Some(mut ball_v) = maybe_ball.and_then(|b| linear_velocity.get_mut(b).ok()) {
-            if let Some(rock) = rocks
+            let m = e.0.manifolds.first().unwrap();
+            let first = balls.contains(e.0.entity1);
+            let normal_normal = if first { m.normal1 } else { -m.normal1 };
+            ball_v.0 = ball_v.0 - (ball_v.0.dot(normal_normal) * normal_normal * 2.0);
+
+            if let Some((e, maybe_rock)) = collisions
                 .get(e.0.entity1)
                 .ok()
-                .or_else(|| rocks.get(e.0.entity2).ok())
+                .or_else(|| collisions.get(e.0.entity2).ok())
             {
-                let m = e.0.manifolds.first().unwrap();
-                let first = balls.contains(e.0.entity1);
-                let normal_normal =if first { m.normal1 } else { - m.normal1 };
-                ball_v.0 = ball_v.0 - (ball_v.0.dot(normal_normal) * normal_normal * 2.0);
-
-                commands.entity(rock).despawn_recursive();
+                if maybe_rock.is_some() {
+                    commands.entity(e).despawn_recursive();
+                }
             }
         }
     }
