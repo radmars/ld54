@@ -71,6 +71,7 @@ const BALL_START: Vec3 = Vec3::new(0.0, 200.0, 1.0);
 const BALL_SPEED: f32 = 250.0;
 
 mod animation;
+mod player_physics;
 
 #[derive(Resource)]
 struct PlayerAnimationTable {
@@ -87,6 +88,7 @@ enum GameState {
     Setup,
     Splash,
     Playing,
+    GameOver,
 }
 
 fn main() {
@@ -155,7 +157,9 @@ fn main() {
     .add_systems(Update, (wait_to_start).run_if(in_state(GameState::Splash)))
     .add_systems(OnEnter(GameState::Setup), setup)
     .add_systems(OnEnter(GameState::Splash), splash_setup)
-    .add_systems(OnExit(GameState::Splash), splash_exit)
+    .add_systems(OnEnter(GameState::GameOver), gg_setup)
+    .add_systems(OnExit(GameState::Splash), remove_all_sprites)
+    .add_systems(OnExit(GameState::Playing), remove_all_sprites)
     .add_systems(OnEnter(GameState::Playing), playing_setup)
     .add_systems(
         Update,
@@ -164,10 +168,11 @@ fn main() {
     .add_systems(
         Update,
         (
-            player_physics.before(check_for_collisions),
-            paddle_ai.before(check_for_collisions),
-            ball_physics.before(check_for_collisions),
-            check_for_collisions,
+            player_physics::player_physics.before(check_for_ball_collisions),
+            paddle_ai.before(check_for_ball_collisions),
+            ball_physics.before(check_for_ball_collisions),
+            check_for_ball_collisions,
+            check_for_gg,
         )
             .run_if(in_state(GameState::Playing))
             .after(player_inputs),
@@ -201,6 +206,9 @@ struct LDAssets {
     #[asset(path = "paddle.png")]
     paddle: Handle<Image>,
 
+    #[asset(path = "gameover.png")]
+    gameover: Handle<Image>,
+
     #[asset(path = "gamebg.png")]
     gamebg: Handle<Image>,
 
@@ -223,7 +231,14 @@ fn splash_setup(assets: Res<LDAssets>, mut commands: Commands) {
     });
 }
 
-fn splash_exit(mut commands: Commands, things_to_remove: Query<Entity, With<Sprite>>) {
+fn gg_setup(assets: Res<LDAssets>, mut commands: Commands) {
+    commands.spawn(SpriteBundle {
+        texture: assets.gameover.clone(),
+        ..default()
+    });
+}
+
+fn remove_all_sprites(mut commands: Commands, things_to_remove: Query<Entity, Or<(With<Sprite>, With<TextureAtlasSprite>)>>) {
     for thing_to_remove in &things_to_remove {
         let mut entity_commands = commands.entity(thing_to_remove);
         entity_commands.despawn();
@@ -308,7 +323,7 @@ fn playing_setup(
                 index: idle_player.first,
                 ..default()
             },
-            transform: Transform::from_translation(Vec3::new(1.0, 2.0, 1.0)),
+            transform: Transform::from_translation(Vec3::new(0.0, 100.0, 1.0)),
             ..default()
         },
         input_manager: InputManagerBundle::<Action> {
@@ -553,12 +568,6 @@ fn player_input_map() -> InputMap<Action> {
     input_map
 }
 
-fn maybe_change_animation(target: &mut AnimationIndices, source: &AnimationIndices) {
-    if target.first != source.first {
-        *target = source.clone();
-    }
-}
-
 fn player_inputs(mut player_query: Query<(&mut Velocity, &ActionState<Action>), With<Player>>) {
     let Ok((mut velocity, action_state)) = player_query.get_single_mut() else {
         return;
@@ -578,51 +587,6 @@ fn player_inputs(mut player_query: Query<(&mut Velocity, &ActionState<Action>), 
     }
 }
 
-fn player_physics(
-    mut player_query: Query<
-        (
-            &mut Velocity,
-            &mut Transform,
-            &mut TextureAtlasSprite,
-            &mut AnimationIndices,
-        ),
-        With<Player>,
-    >,
-    player_animations: Res<PlayerAnimationTable>,
-    time: Res<Time>,
-) {
-    let Ok((mut velocity, mut transform, mut atlas, mut animation)) = player_query.get_single_mut()
-    else {
-        return;
-    };
-
-    // TODO: Collision detection
-
-    // Priority is dealing with jump, then dealing with walk.
-
-    let delta = time.delta().as_secs_f32();
-
-    if velocity.y.abs() > f32::EPSILON && transform.translation.y >= 0.0 {
-        // THIS IS BAD PHYSICS: DELTA TIME IS NOT SUFFICIENT FOR THIS.
-        velocity.y -= 2200.0 * delta;
-        if velocity.y < 0.0 {
-            maybe_change_animation(&mut animation, &player_animations.jump_down);
-        } else {
-            maybe_change_animation(&mut animation, &player_animations.jump_up);
-        }
-        transform.translation.y += velocity.y * delta;
-    } else {
-        transform.translation.y = 0.0;
-        velocity.y = 0.0;
-        if velocity.x.abs() > f32::EPSILON {
-            maybe_change_animation(&mut animation, &player_animations.walk);
-        } else {
-            maybe_change_animation(&mut animation, &player_animations.idle);
-        }
-    }
-    transform.translation.x = (transform.translation.x + velocity.x * delta).clamp(-380.0, 380.0);
-    atlas.flip_x = velocity.x < 0.0;
-}
 
 fn ball_physics(
     mut ball_query: Query<(&mut Velocity, &mut Transform), With<Ball>>,
@@ -640,7 +604,7 @@ fn ball_physics(
     transform.translation.x += velocity.x * delta;
 }
 
-fn check_for_collisions(
+fn check_for_ball_collisions(
     mut commands: Commands,
     mut ball_query: Query<(&mut Velocity, &Transform, &Size), With<Ball>>,
     collider_query: Query<(Entity, &Transform, &Size, Option<&Rock>), With<Collider>>,
@@ -685,5 +649,15 @@ fn check_for_collisions(
                 ball_velocity.y = -ball_velocity.y;
             }
         }
+    }
+}
+
+fn check_for_gg(player_xform: Query<&Transform, With<Player>>, mut next_state: ResMut<NextState<GameState>>) {
+    let Ok(player_xform) = player_xform.get_single() else {
+        return;
+    };
+
+    if player_xform.translation.y < - 380.0 {
+        next_state.set(GameState::GameOver);
     }
 }

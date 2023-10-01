@@ -25,3 +25,11 @@ pub(crate) fn animate(
         }
     }
 }
+
+/// Makes wild assumptions about the identities of animations to decide if the
+/// current playing one should be replaced by the source one.
+pub(crate) fn maybe_change_animation(target: &mut AnimationIndices, source: &AnimationIndices) {
+    if target.first != source.first {
+        *target = source.clone();
+    }
+}
