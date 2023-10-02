@@ -184,7 +184,7 @@ fn main() {
             // Fix sprite blur
             .set(ImagePlugin::default_nearest())
             .set(AudioPlugin {
-                global_volume: GlobalVolume::new(0.8),
+                global_volume: GlobalVolume::new(0.3),
             }),
         loading_plugin,
         InputManagerPlugin::<Action>::default(),
@@ -397,7 +397,7 @@ fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
 
     commands.spawn(PaddleSensorBundle {
         sprite: SpriteBundle::default(),
-        paddle_sensor: PaddleSensor { },
+        paddle_sensor: PaddleSensor {},
         sensor: Sensor,
         collider: Collider::capsule_endpoints(Vec2::new(-11.0, -8.0), Vec2::new(11.0, -8.0), 18.0),
         rigid_body: RigidBody::Static,
@@ -471,39 +471,54 @@ fn playing_setup(
             source: assets.bgm.clone(),
             settings: PlaybackSettings {
                 mode: bevy::audio::PlaybackMode::Loop,
-                volume: bevy::audio::Volume::Absolute(VolumeLevel::new(0.5)),
+                volume: bevy::audio::Volume::Absolute(VolumeLevel::new(0.3)),
                 ..Default::default()
             },
         },
         SpriteBundle::default(),
     ));
-    commands.spawn(WallBundle::new(WallLocation::Left, false)).with_children(|p| {
-        p.spawn(WallSensorBundle {
-            sprite: SpriteBundle::default(), 
-            wall_sensor: WallSensor {  },
-            rigid_body: RigidBody::Static,
-            sensor: Sensor,
-            collider: Collider::cuboid(WallLocation::Left.size().x + 4.0, WallLocation::Left.size().y + 4.0),
+    commands
+        .spawn(WallBundle::new(WallLocation::Left, false))
+        .with_children(|p| {
+            p.spawn(WallSensorBundle {
+                sprite: SpriteBundle::default(),
+                wall_sensor: WallSensor {},
+                rigid_body: RigidBody::Static,
+                sensor: Sensor,
+                collider: Collider::cuboid(
+                    WallLocation::Left.size().x + 4.0,
+                    WallLocation::Left.size().y + 4.0,
+                ),
+            });
         });
-    });
-    commands.spawn(WallBundle::new(WallLocation::Right, false)).with_children(|p| {
-        p.spawn(WallSensorBundle {
-            sprite: SpriteBundle::default(), 
-            wall_sensor: WallSensor {  },
-            rigid_body: RigidBody::Static,
-            sensor: Sensor,
-            collider: Collider::cuboid(WallLocation::Right.size().x + 4.0, WallLocation::Right.size().y + 4.0),
+    commands
+        .spawn(WallBundle::new(WallLocation::Right, false))
+        .with_children(|p| {
+            p.spawn(WallSensorBundle {
+                sprite: SpriteBundle::default(),
+                wall_sensor: WallSensor {},
+                rigid_body: RigidBody::Static,
+                sensor: Sensor,
+                collider: Collider::cuboid(
+                    WallLocation::Right.size().x + 4.0,
+                    WallLocation::Right.size().y + 4.0,
+                ),
+            });
         });
-    });
-    commands.spawn(WallBundle::new(WallLocation::Bottom, false)).with_children(|p| {
-        p.spawn(WallSensorBundle {
-            sprite: SpriteBundle::default(), 
-            wall_sensor: WallSensor {  },
-            rigid_body: RigidBody::Static,
-            sensor: Sensor,
-            collider: Collider::cuboid(WallLocation::Bottom.size().x + 4.0, WallLocation::Bottom.size().y + 4.0),
+    commands
+        .spawn(WallBundle::new(WallLocation::Bottom, false))
+        .with_children(|p| {
+            p.spawn(WallSensorBundle {
+                sprite: SpriteBundle::default(),
+                wall_sensor: WallSensor {},
+                rigid_body: RigidBody::Static,
+                sensor: Sensor,
+                collider: Collider::cuboid(
+                    WallLocation::Bottom.size().x + 4.0,
+                    WallLocation::Bottom.size().y + 4.0,
+                ),
+            });
         });
-    });
     commands
         .spawn(WallBundle::new(WallLocation::Top, true))
         .insert(Sensor);
@@ -672,8 +687,7 @@ struct Paddle {
 }
 
 #[derive(Component)]
-struct WallSensor {
-}
+struct WallSensor {}
 
 #[derive(Bundle)]
 struct WallSensorBundle {
@@ -682,7 +696,6 @@ struct WallSensorBundle {
     sensor: Sensor,
     rigid_body: RigidBody,
     collider: Collider,
-
 }
 
 #[derive(Component)]
@@ -696,7 +709,6 @@ struct PaddleSensorBundle {
     rigid_body: RigidBody,
     collider: Collider,
 }
-
 
 #[derive(Bundle)]
 struct PaddleBundle {
@@ -1019,7 +1031,7 @@ fn player_inputs(
         let x_amount = action_state.clamped_value(Action::Move);
         velocity.x = x_amount * PLAYER_X_SPEED;
 
-        if walk_sound_status.time_since_sound > 0.25 && velocity.y.abs() < 0.1 {
+        if walk_sound_status.time_since_sound > 0.25 && velocity.y.abs() < 0.05 {
             walk_sound_status.time_since_sound = 0.0;
             if walk_sound_status.last_sound == 1 {
                 play_audio(assets.step2_sound.clone(), &mut commands, STEP2_SOUND_TIME);
@@ -1119,7 +1131,14 @@ fn ball_collisions(
         let maybe_ball = balls.get(e.0).ok().or_else(|| balls.get(e.1).ok());
 
         if let Some(ball) = maybe_ball {
-            if let Some((_, maybe_rock, maybe_wall_sensor, maybe_wall, maybe_player, maybe_paddle)) = collisions
+            if let Some((
+                _,
+                maybe_rock,
+                maybe_wall_sensor,
+                maybe_wall,
+                maybe_player,
+                maybe_paddle,
+            )) = collisions
                 .get(e.0)
                 .ok()
                 .or_else(|| collisions.get(e.1).ok())
@@ -1136,8 +1155,7 @@ fn ball_collisions(
                     } else {
                         play_audio(assets.wall_sound.clone(), &mut commands, WALL_SOUND_TIME);
                     }
-                }
-                else if maybe_wall_sensor.is_some() {
+                } else if maybe_wall_sensor.is_some() {
                     info!("Sensor");
                     play_audio(assets.wall_sound.clone(), &mut commands, WALL_SOUND_TIME);
                 }
