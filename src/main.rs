@@ -1062,8 +1062,6 @@ fn ball_collisions(
                 .ok()
                 .or_else(|| collisions.get(e.1).ok())
             {
-                info!("BALLS INSURANCE");
-
                 if let Some(rock) = maybe_rock {
                     commands.entity(rock.target).despawn_recursive();
                     play_audio(assets.break_sound.clone(), &mut commands, BREAK_SOUND_TIME);
