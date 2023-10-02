@@ -218,6 +218,7 @@ fn main() {
     .add_systems(OnExit(GameState::Splash), remove_all_sprites)
     .add_systems(OnExit(GameState::Playing), remove_all_sprites)
     .add_systems(OnExit(GameState::GameOver), remove_all_text)
+    .add_systems(OnExit(GameState::Playing), remove_all_text)
     .add_systems(OnEnter(GameState::Playing), playing_setup)
     .add_systems(
         Update,
@@ -232,6 +233,7 @@ fn main() {
             check_for_gg,
             spawn_ball_timer,
             kill_timed_audio,
+            update_timer,
             player_hacks,
         )
             .run_if(in_state(GameState::Playing)),
@@ -331,11 +333,9 @@ fn gg_setup(assets: Res<LDAssets>, mut commands: Commands) {
         ..default()
     });
     let text_style = TextStyle {
-        // TODO: Uncomment this when it doesn't cause InvalidFont errors.
-        // font: assets.font.clone(),
+        font: assets.font.clone(),
         font_size: 60.0,
         color: Color::BLACK,
-        ..default()
     };
     // TODO: Put this in the middle of the screen and blink.
     commands.spawn(
@@ -550,6 +550,26 @@ fn playing_setup(
                 });
         }
     }
+
+    let text_style = TextStyle {
+        font: assets.font.clone(),
+        font_size: 30.0,
+        color: Color::WHITE,
+    };
+    commands.spawn((
+        TextBundle::from_sections([
+            TextSection::new("Gods' wrath endured for: ", text_style.clone()),
+            TextSection::from_style(text_style.clone()),
+        ])
+        .with_text_alignment(TextAlignment::Left)
+        .with_style(Style {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(5.0),
+            left: Val::Px(5.0),
+            ..default()
+        }),
+        SurvivalTime(0.0),
+    ));
 }
 
 #[derive(Component)]
@@ -585,6 +605,9 @@ struct PlayerBundle {
     restitution: Restitution,
     sleeping_disabled: SleepingDisabled,
 }
+
+#[derive(Component)]
+struct SurvivalTime(f32);
 
 #[derive(Component)]
 struct Paddle {
@@ -1043,4 +1066,12 @@ fn player_hacks(mut sensor_query: Query<&mut Transform, (With<PlayerSensor>, Wit
     };
 
     sensor.translation = player.translation;
+}
+fn update_timer(time: Res<Time>, mut text_widget: Query<(&mut Text, &mut SurvivalTime)>) {
+    let Ok((mut text, mut survival_time)) = text_widget.get_single_mut() else {
+        return;
+    };
+
+    survival_time.0 += time.delta_seconds();
+    text.sections[1].value = format!("{:.2} s", survival_time.0);
 }
