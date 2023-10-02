@@ -205,6 +205,10 @@ fn main() {
     .insert_resource(game_options)
     .insert_resource(Gravity(Vec2::new(0.0, -800.0)))
     .insert_resource(BallSpawnTimer::default())
+    .insert_resource(WalkSoundStatus {
+        last_sound: 2,
+        time_since_sound: 0.0,
+    })
     // .add_systems(Update, bevy::window::close_on_esc)
     .add_systems(Update, (wait_to_start).run_if(in_state(GameState::Splash)))
     .add_systems(
@@ -653,6 +657,12 @@ struct PlayerBundle {
     sleeping_disabled: SleepingDisabled,
 }
 
+#[derive(Resource)]
+struct WalkSoundStatus {
+    last_sound: i8,
+    time_since_sound: f32,
+}
+
 #[derive(Component)]
 struct SurvivalTime(f32);
 
@@ -999,6 +1009,8 @@ fn player_inputs(
     mut player_query: Query<(&mut LinearVelocity, &ActionState<Action>), With<Player>>,
     mut commands: Commands,
     assets: Res<LDAssets>,
+    mut walk_sound_status: ResMut<WalkSoundStatus>,
+    time: Res<Time>,
 ) {
     let Ok((mut velocity, action_state)) = player_query.get_single_mut() else {
         return;
@@ -1007,7 +1019,19 @@ fn player_inputs(
     if action_state.pressed(Action::Move) {
         let x_amount = action_state.clamped_value(Action::Move);
         velocity.x = x_amount * PLAYER_X_SPEED;
-        //play_audio(assets.step1_sound.clone(), &mut commands, STEP1_SOUND_TIME);
+
+        if walk_sound_status.time_since_sound > 0.25 && velocity.y.abs() < 0.1 {
+            walk_sound_status.time_since_sound = 0.0;
+            if walk_sound_status.last_sound == 1 {
+                play_audio(assets.step2_sound.clone(), &mut commands, STEP2_SOUND_TIME);
+                walk_sound_status.last_sound = 2;
+            } else {
+                play_audio(assets.step1_sound.clone(), &mut commands, STEP1_SOUND_TIME);
+                walk_sound_status.last_sound = 1;
+            }
+        } else {
+            walk_sound_status.time_since_sound += time.delta_seconds();
+        }
     }
 
     if action_state.just_pressed(Action::Jump) {
