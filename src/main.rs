@@ -999,7 +999,6 @@ fn player_input_map() -> InputMap<Action> {
         }),
         Action::Move,
     );
-    input_map.insert(KeyCode::Space, Action::Jump);
     input_map.insert(KeyCode::Up, Action::Jump);
     input_map.insert(GamepadButtonType::South, Action::Jump);
     input_map
