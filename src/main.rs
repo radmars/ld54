@@ -473,9 +473,33 @@ fn playing_setup(
         },
         SpriteBundle::default(),
     ));
-    commands.spawn(WallBundle::new(WallLocation::Left, false));
-    commands.spawn(WallBundle::new(WallLocation::Right, false));
-    commands.spawn(WallBundle::new(WallLocation::Bottom, false));
+    commands.spawn(WallBundle::new(WallLocation::Left, false)).with_children(|p| {
+        p.spawn(WallSensorBundle {
+            sprite: SpriteBundle::default(), 
+            wall_sensor: WallSensor {  },
+            rigid_body: RigidBody::Static,
+            sensor: Sensor,
+            collider: Collider::cuboid(WallLocation::Left.size().x + 4.0, WallLocation::Left.size().y + 4.0),
+        });
+    });
+    commands.spawn(WallBundle::new(WallLocation::Right, false)).with_children(|p| {
+        p.spawn(WallSensorBundle {
+            sprite: SpriteBundle::default(), 
+            wall_sensor: WallSensor {  },
+            rigid_body: RigidBody::Static,
+            sensor: Sensor,
+            collider: Collider::cuboid(WallLocation::Right.size().x + 4.0, WallLocation::Right.size().y + 4.0),
+        });
+    });
+    commands.spawn(WallBundle::new(WallLocation::Bottom, false)).with_children(|p| {
+        p.spawn(WallSensorBundle {
+            sprite: SpriteBundle::default(), 
+            wall_sensor: WallSensor {  },
+            rigid_body: RigidBody::Static,
+            sensor: Sensor,
+            collider: Collider::cuboid(WallLocation::Bottom.size().x + 4.0, WallLocation::Bottom.size().y + 4.0),
+        });
+    });
     commands
         .spawn(WallBundle::new(WallLocation::Top, true))
         .insert(Sensor);
@@ -635,6 +659,20 @@ struct SurvivalTime(f32);
 #[derive(Component)]
 struct Paddle {
     left: bool,
+}
+
+#[derive(Component)]
+struct WallSensor {
+}
+
+#[derive(Bundle)]
+struct WallSensorBundle {
+    sprite: SpriteBundle,
+    wall_sensor: WallSensor,
+    sensor: Sensor,
+    rigid_body: RigidBody,
+    collider: Collider,
+
 }
 
 #[derive(Component)]
@@ -1045,6 +1083,7 @@ fn ball_collisions(
         (
             Entity,
             Option<&RockSensor>,
+            Option<&WallSensor>,
             Option<&Wall>,
             Option<&PlayerSensor>,
             Option<&PaddleSensor>,
@@ -1057,7 +1096,7 @@ fn ball_collisions(
         let maybe_ball = balls.get(e.0).ok().or_else(|| balls.get(e.1).ok());
 
         if let Some(ball) = maybe_ball {
-            if let Some((_, maybe_rock, maybe_wall, maybe_player, maybe_paddle)) = collisions
+            if let Some((_, maybe_rock, maybe_wall_sensor, maybe_wall, maybe_player, maybe_paddle)) = collisions
                 .get(e.0)
                 .ok()
                 .or_else(|| collisions.get(e.1).ok())
@@ -1068,11 +1107,16 @@ fn ball_collisions(
                 }
 
                 if let Some(wall) = maybe_wall {
+                    info!("Wll");
                     if wall.ball_destroyer {
                         commands.entity(ball).despawn_recursive();
                     } else {
                         play_audio(assets.wall_sound.clone(), &mut commands, WALL_SOUND_TIME);
                     }
+                }
+                else if maybe_wall_sensor.is_some() {
+                    info!("Sensor");
+                    play_audio(assets.wall_sound.clone(), &mut commands, WALL_SOUND_TIME);
                 }
 
                 if let Some(_) = maybe_player {
