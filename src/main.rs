@@ -36,7 +36,7 @@
 use std::{collections::HashMap, f32::consts::PI, time::Duration};
 
 use animation::{maybe_change_animation, AnimationIndices};
-use bevy::audio::AudioPlugin;
+use bevy::audio::{AudioPlugin, VolumeLevel};
 use bevy::{prelude::*, sprite::Anchor, window::WindowResolution};
 use bevy_asset_loader::prelude::*;
 use bevy_xpbd_2d::prelude::*;
@@ -317,13 +317,7 @@ fn setup(
     config: Res<GameOptions>,
 ) {
     commands.spawn(Camera2dBundle::default());
-    commands.spawn(AudioBundle {
-        source: assets.bgm.clone(),
-        settings: PlaybackSettings {
-            mode: bevy::audio::PlaybackMode::Loop,
-            ..Default::default()
-        },
-    });
+    
     if config.skip {
         next_state.set(GameState::Playing);
     } else {
@@ -460,7 +454,14 @@ fn playing_setup(
         texture: assets.gamebg.clone(),
         ..default()
     });
-
+    commands.spawn((AudioBundle {
+        source: assets.bgm.clone(),
+        settings: PlaybackSettings {
+            mode: bevy::audio::PlaybackMode::Loop,
+            volume: bevy::audio::Volume::Absolute(VolumeLevel::new(0.5)),
+            ..Default::default()
+        },
+    }, SpriteBundle::default()));
     commands.spawn(WallBundle::new(WallLocation::Left, false));
     commands.spawn(WallBundle::new(WallLocation::Right, false));
     commands.spawn(WallBundle::new(WallLocation::Bottom, false));
