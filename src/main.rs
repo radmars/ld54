@@ -493,7 +493,7 @@ fn playing_setup(
     commands.spawn(pb);
     commands.spawn(PlayerSensorBundle {
         sprite: SpriteBundle::default(),
-        player_sensor: PlayerSensor{},
+        player_sensor: PlayerSensor {},
         sensor: Sensor,
         collision_layer: CollisionLayers::new(
             [Layer::Player],
@@ -996,7 +996,15 @@ fn ball_collisions(
     mut commands: Commands,
     mut collision_end: EventReader<CollisionEnded>,
     balls: Query<Entity, With<Ball>>,
-    collisions: Query<(Entity, Option<&RockSensor>, Option<&Wall>, Option<&PlayerSensor>), With<Collider>>,
+    collisions: Query<
+        (
+            Entity,
+            Option<&RockSensor>,
+            Option<&Wall>,
+            Option<&PlayerSensor>,
+        ),
+        With<Collider>,
+    >,
     assets: Res<LDAssets>,
 ) {
     for e in &mut collision_end {
@@ -1051,12 +1059,15 @@ fn play_audio(source: Handle<AudioSource>, commands: &mut Commands, length: f32)
             ..default()
         },
         timed_audio: TimedAudio {
-            timer: Timer::new(Duration::from_secs_f32(length), TimerMode::Once)
-        }
+            timer: Timer::new(Duration::from_secs_f32(length), TimerMode::Once),
+        },
     });
 }
 
-fn player_hacks(mut sensor_query: Query<&mut Transform, (With<PlayerSensor>, Without<Player>)>, player_query: Query<&Transform, (With<Player>, Without<PlayerSensor>)>) {
+fn player_hacks(
+    mut sensor_query: Query<&mut Transform, (With<PlayerSensor>, Without<Player>)>,
+    player_query: Query<&Transform, (With<Player>, Without<PlayerSensor>)>,
+) {
     let Ok(mut sensor) = sensor_query.get_single_mut() else {
         return;
     };
