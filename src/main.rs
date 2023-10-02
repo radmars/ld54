@@ -306,7 +306,7 @@ struct LDAssets {
     #[asset(path = "audio/wall.ogg")]
     wall_sound: Handle<AudioSource>,
 
-    #[asset(path = "audio/ld54-main.mp3")]
+    #[asset(path = "audio/ld54-main.ogg")]
     bgm: Handle<AudioSource>,
 }
 
