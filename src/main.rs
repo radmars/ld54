@@ -235,6 +235,7 @@ fn main() {
             kill_timed_audio,
             update_timer,
             player_hacks,
+            paddle_hack,
         )
             .run_if(in_state(GameState::Playing)),
     )
@@ -388,6 +389,14 @@ fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
         collider: Collider::capsule_endpoints(Vec2::new(-11.0, -8.0), Vec2::new(11.0, -8.0), 15.0),
         rigid_body: RigidBody::Static,
         restitution: Restitution::new(1.0).with_combine_rule(CoefficientCombine::Max),
+    });
+
+    commands.spawn(PaddleSensorBundle {
+        sprite: SpriteBundle::default(),
+        paddle_sensor: PaddleSensor { },
+        sensor: Sensor,
+        collider: Collider::capsule_endpoints(Vec2::new(-11.0, -8.0), Vec2::new(11.0, -8.0), 18.0),
+        rigid_body: RigidBody::Static,
     });
 }
 
@@ -627,6 +636,19 @@ struct SurvivalTime(f32);
 struct Paddle {
     left: bool,
 }
+
+#[derive(Component)]
+struct PaddleSensor {}
+
+#[derive(Bundle)]
+struct PaddleSensorBundle {
+    sprite: SpriteBundle,
+    paddle_sensor: PaddleSensor,
+    sensor: Sensor,
+    rigid_body: RigidBody,
+    collider: Collider,
+}
+
 
 #[derive(Bundle)]
 struct PaddleBundle {
@@ -1025,6 +1047,7 @@ fn ball_collisions(
             Option<&RockSensor>,
             Option<&Wall>,
             Option<&PlayerSensor>,
+            Option<&PaddleSensor>,
         ),
         With<Collider>,
     >,
@@ -1034,7 +1057,7 @@ fn ball_collisions(
         let maybe_ball = balls.get(e.0).ok().or_else(|| balls.get(e.1).ok());
 
         if let Some(ball) = maybe_ball {
-            if let Some((_, maybe_rock, maybe_wall, maybe_player)) = collisions
+            if let Some((_, maybe_rock, maybe_wall, maybe_player, maybe_paddle)) = collisions
                 .get(e.0)
                 .ok()
                 .or_else(|| collisions.get(e.1).ok())
@@ -1061,6 +1084,10 @@ fn ball_collisions(
                     } else {
                         play_audio(assets.ball2_sound.clone(), &mut commands, BALL2_SOUND_TIME);
                     }
+                }
+
+                if maybe_paddle.is_some() {
+                    info!("???");
                 }
             }
         }
@@ -1089,6 +1116,21 @@ fn play_audio(source: Handle<AudioSource>, commands: &mut Commands, length: f32)
             timer: Timer::new(Duration::from_secs_f32(length), TimerMode::Once),
         },
     });
+}
+
+fn paddle_hack(
+    mut sensor_query: Query<&mut Transform, (With<PaddleSensor>, Without<Paddle>)>,
+    paddle_query: Query<&Transform, (With<Paddle>, Without<PaddleSensor>)>,
+) {
+    let Ok(mut sensor) = sensor_query.get_single_mut() else {
+        return;
+    };
+
+    let Ok(paddle) = paddle_query.get_single() else {
+        return;
+    };
+
+    sensor.translation = paddle.translation;
 }
 
 fn player_hacks(
