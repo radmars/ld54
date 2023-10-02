@@ -1085,7 +1085,7 @@ fn ball_collisions(
                 }
 
                 if maybe_paddle.is_some() {
-                    info!("???");
+                    play_audio(assets.ball2_sound.clone(), &mut commands, BALL2_SOUND_TIME);
                 }
             }
         }
