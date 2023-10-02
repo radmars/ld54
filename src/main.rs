@@ -313,11 +313,10 @@ struct LDAssets {
 fn setup(
     mut commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
-    assets: Res<LDAssets>,
     config: Res<GameOptions>,
 ) {
     commands.spawn(Camera2dBundle::default());
-    
+
     if config.skip {
         next_state.set(GameState::Playing);
     } else {
@@ -454,14 +453,17 @@ fn playing_setup(
         texture: assets.gamebg.clone(),
         ..default()
     });
-    commands.spawn((AudioBundle {
-        source: assets.bgm.clone(),
-        settings: PlaybackSettings {
-            mode: bevy::audio::PlaybackMode::Loop,
-            volume: bevy::audio::Volume::Absolute(VolumeLevel::new(0.5)),
-            ..Default::default()
+    commands.spawn((
+        AudioBundle {
+            source: assets.bgm.clone(),
+            settings: PlaybackSettings {
+                mode: bevy::audio::PlaybackMode::Loop,
+                volume: bevy::audio::Volume::Absolute(VolumeLevel::new(0.5)),
+                ..Default::default()
+            },
         },
-    }, SpriteBundle::default()));
+        SpriteBundle::default(),
+    ));
     commands.spawn(WallBundle::new(WallLocation::Left, false));
     commands.spawn(WallBundle::new(WallLocation::Right, false));
     commands.spawn(WallBundle::new(WallLocation::Bottom, false));
@@ -960,12 +962,19 @@ fn player_inputs(
 fn check_for_gg(
     player_xform: Query<&Transform, With<Player>>,
     mut next_state: ResMut<NextState<GameState>>,
+    mut commands: Commands,
+    assets: Res<LDAssets>,
 ) {
     let Ok(player_xform) = player_xform.get_single() else {
         return;
     };
 
     if player_xform.translation.y < -270.0 {
+        play_audio(
+            assets.explosion_sound.clone(),
+            &mut commands,
+            EXPLOSION_SOUND_TIME,
+        );
         next_state.set(GameState::GameOver);
     }
 }
@@ -1007,6 +1016,7 @@ pub(crate) fn player_animation(
 fn ball_collisions(
     mut commands: Commands,
     mut collision_end: EventReader<CollisionEnded>,
+    mut rng: ResMut<Randomizer>,
     balls: Query<Entity, With<Ball>>,
     collisions: Query<
         (
@@ -1043,9 +1053,13 @@ fn ball_collisions(
                     }
                 }
 
-                if let Some(player) = maybe_player {
-                    play_audio(assets.ball_sound.clone(), &mut commands, BALL_SOUND_TIME);
-                    info!("PLAYER COLLOISOISJ");
+                if let Some(_) = maybe_player {
+                    let i = rng.rng.gen_range(0..2);
+                    if i == 1 {
+                        play_audio(assets.ball_sound.clone(), &mut commands, BALL_SOUND_TIME);
+                    } else {
+                        play_audio(assets.ball2_sound.clone(), &mut commands, BALL2_SOUND_TIME);
+                    }
                 }
             }
         }
