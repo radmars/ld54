@@ -70,6 +70,15 @@ const GAP_BETWEEN_ROCKS_AND_PADDLE: f32 = 200.0;
 const BALL_SPEED: f32 = 250.0;
 const BALL_SPAWN_INTERVAL: f32 = 10.0;
 
+const BALL_SOUND_TIME: f32 = 0.169;
+const BALL2_SOUND_TIME: f32 = 0.169;
+const BREAK_SOUND_TIME: f32 = 0.417;
+const EXPLOSION_SOUND_TIME: f32 = 1.878;
+const JUMP_SOUND_TIME: f32 = 0.234;
+const STEP1_SOUND_TIME: f32 = 0.225;
+const STEP2_SOUND_TIME: f32 = 0.225;
+const WALL_SOUND_TIME: f32 = 0.139;
+
 mod animation;
 
 #[derive(Resource)]
@@ -224,6 +233,7 @@ fn main() {
             spawn_ball_timer,
             check_player_grouded,
             kill_timed_audio,
+            player_hacks,
         )
             .run_if(in_state(GameState::Playing)),
     )
@@ -271,8 +281,29 @@ struct LDAssets {
     #[asset(path = "bomb.png")]
     bomb: Handle<Image>,
 
+    #[asset(path = "audio/ball.ogg")]
+    ball_sound: Handle<AudioSource>,
+
+    #[asset(path = "audio/ball2.ogg")]
+    ball2_sound: Handle<AudioSource>,
+
+    #[asset(path = "audio/break.ogg")]
+    break_sound: Handle<AudioSource>,
+
+    #[asset(path = "audio/explosion.ogg")]
+    explosion_sound: Handle<AudioSource>,
+
     #[asset(path = "audio/jump.ogg")]
     jump_sound: Handle<AudioSource>,
+
+    #[asset(path = "audio/step1.ogg")]
+    step1_sound: Handle<AudioSource>,
+
+    #[asset(path = "audio/step2.ogg")]
+    step2_sound: Handle<AudioSource>,
+
+    #[asset(path = "audio/wall.ogg")]
+    wall_sound: Handle<AudioSource>,
 }
 
 fn setup(
@@ -464,6 +495,17 @@ fn playing_setup(
             .with_max_time_of_impact(50.0),
     };
     commands.spawn(pb);
+    commands.spawn(PlayerSensorBundle {
+        sprite: SpriteBundle::default(),
+        player_sensor: PlayerSensor{},
+        sensor: Sensor,
+        collision_layer: CollisionLayers::new(
+            [Layer::Player],
+            [Layer::Rock, Layer::Wall, Layer::Paddle, Layer::Ball],
+        ),
+        rigid_body: RigidBody::Kinematic,
+        collider: Collider::capsule_endpoints(Vec2::new(-5.0, 0.0), Vec2::new(10.0, 0.0), 28.0),
+    });
 
     commands.spawn(BallBundle::new(&assets, &mut rng, PADDLE_START));
 
@@ -512,6 +554,19 @@ fn playing_setup(
                 });
         }
     }
+}
+
+#[derive(Component)]
+struct PlayerSensor {}
+
+#[derive(Bundle)]
+struct PlayerSensorBundle {
+    sprite: SpriteBundle,
+    player_sensor: PlayerSensor,
+    sensor: Sensor,
+    collision_layer: CollisionLayers,
+    rigid_body: RigidBody,
+    collider: Collider,
 }
 
 #[derive(Component, Default)]
@@ -852,7 +907,7 @@ fn player_input_map() -> InputMap<Action> {
 fn player_inputs(
     mut player_query: Query<(&mut LinearVelocity, &ActionState<Action>), With<Player>>,
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
+    assets: Res<LDAssets>,
 ) {
     let Ok((mut velocity, action_state)) = player_query.get_single_mut() else {
         return;
@@ -861,10 +916,7 @@ fn player_inputs(
     if action_state.pressed(Action::Move) {
         let x_amount = action_state.clamped_value(Action::Move);
         velocity.x = x_amount * PLAYER_X_SPEED;
-        /*commands.spawn(AudioBundle {
-            source: asset_server.load("audio/step1.ogg"),
-            ..default()
-        });*/
+        //play_audio(assets.step1_sound.clone(), &mut commands, STEP1_SOUND_TIME);
     }
 
     if action_state.just_pressed(Action::Jump) {
@@ -872,11 +924,7 @@ fn player_inputs(
         // https://github.com/Jondolf/bevy_xpbd/blob/8b2ea8fd4754fb3ecd51f79fad282d22631d2c7f/crates/bevy_xpbd_2d/examples/one_way_platform_2d.rs#L152-L157
         if velocity.y.abs() < 0.5 {
             velocity.y = 400f32;
-            commands.spawn(AudioBundle {
-                source: asset_server.load("audio/jump.ogg"),
-                ..default()
-            });
-            println!("JUMP!");
+            play_audio(assets.jump_sound.clone(), &mut commands, JUMP_SOUND_TIME);
         }
     }
 }
@@ -933,45 +981,36 @@ fn ball_collisions(
     mut commands: Commands,
     mut collision_end: EventReader<CollisionEnded>,
     balls: Query<Entity, With<Ball>>,
-    collisions: Query<(Entity, Option<&RockSensor>, Option<&Wall>), With<Collider>>,
+    collisions: Query<(Entity, Option<&RockSensor>, Option<&Wall>, Option<&PlayerSensor>), With<Collider>>,
     assets: Res<LDAssets>,
 ) {
     for e in &mut collision_end {
         let maybe_ball = balls.get(e.0).ok().or_else(|| balls.get(e.1).ok());
 
         if let Some(ball) = maybe_ball {
-            if let Some((_, maybe_rock, maybe_wall)) = collisions
+            if let Some((_, maybe_rock, maybe_wall, maybe_player)) = collisions
                 .get(e.0)
                 .ok()
                 .or_else(|| collisions.get(e.1).ok())
             {
+                info!("BALLS INSURANCE");
+
                 if let Some(rock) = maybe_rock {
                     commands.entity(rock.target).despawn_recursive();
-                    commands.spawn(TimedAudioBundle {
-                        audio_bundle: AudioBundle {
-                            source: assets.jump_sound.clone(),
-                            ..default()
-                        },
-                        timed_audio: TimedAudio {
-                            timer: Timer::new(Duration::from_secs_f32(0.234), TimerMode::Once),
-                        },
-                    });
+                    play_audio(assets.break_sound.clone(), &mut commands, BREAK_SOUND_TIME);
                 }
 
                 if let Some(wall) = maybe_wall {
                     if wall.ball_destroyer {
                         commands.entity(ball).despawn_recursive();
                     } else {
-                        commands.spawn(TimedAudioBundle {
-                            audio_bundle: AudioBundle {
-                                source: assets.jump_sound.clone(),
-                                ..default()
-                            },
-                            timed_audio: TimedAudio {
-                                timer: Timer::new(Duration::from_secs_f32(0.234), TimerMode::Once),
-                            },
-                        });
+                        play_audio(assets.wall_sound.clone(), &mut commands, WALL_SOUND_TIME);
                     }
+                }
+
+                if let Some(player) = maybe_player {
+                    play_audio(assets.ball_sound.clone(), &mut commands, BALL_SOUND_TIME);
+                    info!("PLAYER COLLOISOISJ");
                 }
             }
         }
@@ -1002,4 +1041,28 @@ fn check_player_grouded(
             }
         }
     }
+}
+
+fn play_audio(source: Handle<AudioSource>, commands: &mut Commands, length: f32) {
+    commands.spawn(TimedAudioBundle {
+        audio_bundle: AudioBundle {
+            source: source,
+            ..default()
+        },
+        timed_audio: TimedAudio {
+            timer: Timer::new(Duration::from_secs_f32(length), TimerMode::Once)
+        }
+    });
+}
+
+fn player_hacks(mut sensor_query: Query<&mut Transform, (With<PlayerSensor>, Without<Player>)>, player_query: Query<&Transform, (With<Player>, Without<PlayerSensor>)>) {
+    let Ok(mut sensor) = sensor_query.get_single_mut() else {
+        return;
+    };
+
+    let Ok(player) = player_query.get_single() else {
+        return;
+    };
+
+    sensor.translation = player.translation;
 }
