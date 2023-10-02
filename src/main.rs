@@ -38,6 +38,7 @@ use std::{collections::HashMap, f32::consts::PI};
 
 use animation::{maybe_change_animation, AnimationIndices};
 use bevy::{prelude::*, sprite::Anchor, window::WindowResolution};
+use bevy::audio::AudioPlugin;
 use bevy_asset_loader::prelude::*;
 use bevy_xpbd_2d::prelude::*;
 use iyes_progress::prelude::*;
@@ -173,7 +174,10 @@ fn main() {
                 ..default()
             })
             // Fix sprite blur
-            .set(ImagePlugin::default_nearest()),
+            .set(ImagePlugin::default_nearest())
+            .set(AudioPlugin {
+                global_volume: GlobalVolume::new(0.8),
+            }),
         loading_plugin,
         InputManagerPlugin::<Action>::default(),
         PhysicsPlugins::default(),
@@ -208,7 +212,7 @@ fn main() {
     .add_systems(Update, ball_collisions.run_if(in_state(GameState::Playing)))
     .add_systems(
         Update,
-        (player_animation, paddle_ai, check_for_gg, spawn_ball_timer)
+        (player_animation, paddle_ai, check_for_gg, spawn_ball_timer, kill_timed_audio)
             .run_if(in_state(GameState::Playing)),
     )
     .run();
@@ -252,7 +256,7 @@ struct LDAssets {
     #[asset(path = "bomb.png")]
     bomb: Handle<Image>,
 
-    #[asset(path = "jump.ogg")]
+    #[asset(path = "audio/jump.ogg")]
     jump_sound: Handle<AudioSource>,
 }
 
@@ -522,6 +526,18 @@ struct RockBundle {
     rigid_body: RigidBody,
     collision_layer: CollisionLayers,
     sleeping_disabled: SleepingDisabled,
+}
+
+#[derive(Bundle)]
+struct TimedAudioBundle {
+    #[bundle()]
+    audio_bundle: AudioBundle,
+    timed_audio: TimedAudio,
+}
+
+#[derive(Component)]
+struct TimedAudio {
+    timer: Timer,
 }
 
 impl RockBundle {
@@ -796,10 +812,11 @@ fn player_inputs(
     if action_state.pressed(Action::Move) {
         let x_amount = action_state.clamped_value(Action::Move);
         velocity.x = x_amount * PLAYER_X_SPEED;
-        commands.spawn(AudioBundle {
+       /*commands.spawn(AudioBundle {
             source: asset_server.load("audio/step1.ogg"),
             ..default()
-        });
+        });*/
+
     }
 
     if action_state.just_pressed(Action::Jump) {
@@ -881,9 +898,14 @@ fn ball_collisions(
             {
                 if let Some(rock) = maybe_rock {
                     commands.entity(rock.target).despawn_recursive();
-                    commands.spawn(AudioBundle {
-                        source: assets.jump_sound.clone(),
-                        ..default()
+                    commands.spawn(TimedAudioBundle {
+                        audio_bundle: AudioBundle {
+                            source: assets.jump_sound.clone(),
+                            ..default()
+                        },
+                        timed_audio: TimedAudio {
+                            timer: Timer::new(Duration::from_secs_f32(0.234), TimerMode::Once)
+                        }
                     });
                 }
 
@@ -891,13 +913,27 @@ fn ball_collisions(
                     if wall.ball_destroyer {
                         commands.entity(ball).despawn_recursive();
                     } else {
-                        commands.spawn(AudioBundle {
-                            source: assets.jump_sound.clone(),
-                            ..default()
+                        commands.spawn(TimedAudioBundle {
+                            audio_bundle: AudioBundle {
+                                source: assets.jump_sound.clone(),
+                                ..default()
+                            },
+                            timed_audio: TimedAudio {
+                                timer: Timer::new(Duration::from_secs_f32(0.234), TimerMode::Once)
+                            }
                         });
                     }
                 }
             }
+        }
+    }
+}
+
+fn kill_timed_audio(time: Res<Time>, mut query: Query<(Entity, &mut TimedAudio)>, mut commands: Commands) {
+    for mut audio in &mut query {
+        audio.1.timer.tick(time.delta());
+        if audio.1.timer.just_finished() {
+            commands.entity(audio.0).despawn();
         }
     }
 }
