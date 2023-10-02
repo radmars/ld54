@@ -37,6 +37,7 @@ features = [
 	"bevy_ui",
 	# "multi-threaded",
 	"png",
+    "mp3",
 	# "hdr",
 	# "ktx2",
 	# "zstd",

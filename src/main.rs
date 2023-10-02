@@ -305,14 +305,25 @@ struct LDAssets {
 
     #[asset(path = "audio/wall.ogg")]
     wall_sound: Handle<AudioSource>,
+
+    #[asset(path = "audio/ld54-main.mp3")]
+    bgm: Handle<AudioSource>,
 }
 
 fn setup(
     mut commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
+    assets: Res<LDAssets>,
     config: Res<GameOptions>,
 ) {
     commands.spawn(Camera2dBundle::default());
+    commands.spawn(AudioBundle {
+        source: assets.bgm.clone(),
+        settings: PlaybackSettings {
+            mode: bevy::audio::PlaybackMode::Loop,
+            ..Default::default()
+        },
+    });
     if config.skip {
         next_state.set(GameState::Playing);
     } else {
