@@ -33,12 +33,11 @@
 // I'm not sure i like this 2018 idiom. Can debate it later.
 #![allow(elided_lifetimes_in_paths)]
 
-use std::time::Duration;
-use std::{collections::HashMap, f32::consts::PI};
+use std::{collections::HashMap, f32::consts::PI, time::Duration};
 
 use animation::{maybe_change_animation, AnimationIndices};
-use bevy::{prelude::*, sprite::Anchor, window::WindowResolution};
 use bevy::audio::AudioPlugin;
+use bevy::{prelude::*, sprite::Anchor, window::WindowResolution};
 use bevy_asset_loader::prelude::*;
 use bevy_xpbd_2d::prelude::*;
 use iyes_progress::prelude::*;
@@ -199,11 +198,17 @@ fn main() {
     .insert_resource(BallSpawnTimer::default())
     // .add_systems(Update, bevy::window::close_on_esc)
     .add_systems(Update, (wait_to_start).run_if(in_state(GameState::Splash)))
+    .add_systems(
+        Update,
+        (wait_to_start).run_if(in_state(GameState::GameOver)),
+    )
     .add_systems(OnEnter(GameState::Setup), setup)
     .add_systems(OnEnter(GameState::Splash), splash_setup)
     .add_systems(OnEnter(GameState::GameOver), gg_setup)
+    .add_systems(OnExit(GameState::GameOver), remove_all_sprites)
     .add_systems(OnExit(GameState::Splash), remove_all_sprites)
     .add_systems(OnExit(GameState::Playing), remove_all_sprites)
+    .add_systems(OnExit(GameState::GameOver), remove_all_text)
     .add_systems(OnEnter(GameState::Playing), playing_setup)
     .add_systems(
         Update,
@@ -212,7 +217,13 @@ fn main() {
     .add_systems(Update, ball_collisions.run_if(in_state(GameState::Playing)))
     .add_systems(
         Update,
-        (player_animation, paddle_ai, check_for_gg, spawn_ball_timer, kill_timed_audio)
+        (
+            player_animation,
+            paddle_ai,
+            check_for_gg,
+            spawn_ball_timer,
+            kill_timed_audio,
+        )
             .run_if(in_state(GameState::Playing)),
     )
     .run();
@@ -233,6 +244,9 @@ impl Default for Randomizer {
 
 #[derive(AssetCollection, Resource)]
 struct LDAssets {
+    #[asset(path = "FiraSans-Bold.ttf")]
+    font: Handle<Font>,
+
     #[asset(texture_atlas(tile_size_x = 64., tile_size_y = 70., columns = 9, rows = 1))]
     #[asset(path = "player.png")]
     player: Handle<TextureAtlas>,
@@ -260,12 +274,15 @@ struct LDAssets {
     jump_sound: Handle<AudioSource>,
 }
 
-fn setup(mut commands: Commands, mut next_state: ResMut<NextState<GameState>>, config: Res<GameOptions>) {
+fn setup(
+    mut commands: Commands,
+    mut next_state: ResMut<NextState<GameState>>,
+    config: Res<GameOptions>,
+) {
     commands.spawn(Camera2dBundle::default());
     if config.skip {
         next_state.set(GameState::Playing);
-    }
-    else {
+    } else {
         next_state.set(GameState::Splash);
     }
 }
@@ -282,6 +299,31 @@ fn gg_setup(assets: Res<LDAssets>, mut commands: Commands) {
         texture: assets.gameover.clone(),
         ..default()
     });
+    let text_style = TextStyle {
+        // TODO: Uncomment this when it doesn't cause InvalidFont errors.
+        // font: assets.font.clone(),
+        font_size: 60.0,
+        color: Color::BLACK,
+        ..default()
+    };
+    // TODO: Put this in the middle of the screen and blink.
+    commands.spawn(
+        TextBundle::from_section("Press space to restart", text_style)
+            .with_text_alignment(TextAlignment::Center)
+            .with_style(Style {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(5.0),
+                right: Val::Px(15.0),
+                ..default()
+            }),
+    );
+}
+
+fn remove_all_text(mut commands: Commands, things_to_remove: Query<Entity, With<Text>>) {
+    for thing_to_remove in &things_to_remove {
+        let mut entity_commands = commands.entity(thing_to_remove);
+        entity_commands.despawn();
+    }
 }
 
 fn remove_all_sprites(
@@ -812,11 +854,10 @@ fn player_inputs(
     if action_state.pressed(Action::Move) {
         let x_amount = action_state.clamped_value(Action::Move);
         velocity.x = x_amount * PLAYER_X_SPEED;
-       /*commands.spawn(AudioBundle {
+        /*commands.spawn(AudioBundle {
             source: asset_server.load("audio/step1.ogg"),
             ..default()
         });*/
-
     }
 
     if action_state.just_pressed(Action::Jump) {
@@ -904,8 +945,8 @@ fn ball_collisions(
                             ..default()
                         },
                         timed_audio: TimedAudio {
-                            timer: Timer::new(Duration::from_secs_f32(0.234), TimerMode::Once)
-                        }
+                            timer: Timer::new(Duration::from_secs_f32(0.234), TimerMode::Once),
+                        },
                     });
                 }
 
@@ -919,8 +960,8 @@ fn ball_collisions(
                                 ..default()
                             },
                             timed_audio: TimedAudio {
-                                timer: Timer::new(Duration::from_secs_f32(0.234), TimerMode::Once)
-                            }
+                                timer: Timer::new(Duration::from_secs_f32(0.234), TimerMode::Once),
+                            },
                         });
                     }
                 }
@@ -929,7 +970,11 @@ fn ball_collisions(
     }
 }
 
-fn kill_timed_audio(time: Res<Time>, mut query: Query<(Entity, &mut TimedAudio)>, mut commands: Commands) {
+fn kill_timed_audio(
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut TimedAudio)>,
+    mut commands: Commands,
+) {
     for mut audio in &mut query {
         audio.1.timer.tick(time.delta());
         if audio.1.timer.just_finished() {
