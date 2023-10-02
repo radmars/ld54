@@ -222,6 +222,7 @@ fn main() {
             paddle_ai,
             check_for_gg,
             spawn_ball_timer,
+            check_player_grouded,
             kill_timed_audio,
         )
             .run_if(in_state(GameState::Playing)),
@@ -446,7 +447,7 @@ fn playing_setup(
             ..default()
         },
         animation_indices: idle_player,
-        player: Player,
+        player: Player { grounded: false },
         rigid_body: RigidBody::Dynamic,
         collider: Collider::capsule_endpoints(Vec2::new(-5.0, 0.0), Vec2::new(10.0, 0.0), 21.0),
         external_force: ExternalForce::ZERO,
@@ -458,6 +459,9 @@ fn playing_setup(
         ),
         restitution: Restitution::PERFECTLY_INELASTIC.with_combine_rule(CoefficientCombine::Min),
         sleeping_disabled: SleepingDisabled,
+        ray_caster: RayCaster::new(Vec2::ZERO, -Vec2::Y)
+            .with_max_hits(20)
+            .with_max_time_of_impact(50.0),
     };
     commands.spawn(pb);
 
@@ -511,7 +515,9 @@ fn playing_setup(
 }
 
 #[derive(Component, Default)]
-struct Player;
+struct Player {
+    grounded: bool,
+}
 
 #[derive(Bundle)]
 struct PlayerBundle {
@@ -529,6 +535,7 @@ struct PlayerBundle {
     collision_layer: CollisionLayers,
     restitution: Restitution,
     sleeping_disabled: SleepingDisabled,
+    ray_caster: RayCaster,
 }
 
 #[derive(Component)]
@@ -890,31 +897,32 @@ fn check_for_gg(
 pub(crate) fn player_animation(
     mut player_query: Query<
         (
+            &Player,
             &LinearVelocity,
             &mut TextureAtlasSprite,
             &mut AnimationIndices,
         ),
-        With<Player>,
     >,
     player_animations: Res<PlayerAnimationTable>,
 ) {
-    let Ok((velocity, mut atlas, mut animation)) = player_query.get_single_mut() else {
+    let Ok((player, velocity, mut atlas, mut animation)) = player_query.get_single_mut() else {
         return;
     };
 
-    // Priority is dealing with jump, then dealing with walk.
-
-    if velocity.y.abs() > 0.2 {
+    if player.grounded {
+        if velocity.x.abs() > 0.1 {
+            maybe_change_animation(&mut animation, &player_animations.walk);
+        } else {
+            maybe_change_animation(&mut animation, &player_animations.idle);
+        }
+    }
+    else if velocity.y.abs() > 0.1 {
         if velocity.y < 0.0 {
             maybe_change_animation(&mut animation, &player_animations.jump_down);
         } else {
             maybe_change_animation(&mut animation, &player_animations.jump_up);
         }
-    } else if velocity.x.abs() > 0.2 {
-        maybe_change_animation(&mut animation, &player_animations.walk);
-    } else {
-        maybe_change_animation(&mut animation, &player_animations.idle);
-    }
+    } 
 
     if velocity.x.abs() > 0.2 {
         atlas.flip_x = velocity.x < 0.0;
@@ -979,6 +987,19 @@ fn kill_timed_audio(
         audio.1.timer.tick(time.delta());
         if audio.1.timer.just_finished() {
             commands.entity(audio.0).despawn();
+        }
+    }
+}
+
+fn check_player_grouded(
+    mut player: Query<(&mut Player, &RayCaster, &RayHits)>,
+    mut rocks: Query<Entity, With<Rock>>,
+) {
+    for (mut player, ray, hits) in &mut player {
+        if let Some(hit) = hits.iter_sorted().next() {
+            if rocks.contains(hit.entity) && hit.time_of_impact < 21.5 {
+                player.grounded = true;
+            }
         }
     }
 }
