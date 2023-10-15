@@ -441,50 +441,13 @@ fn playing_setup(
         SpriteBundle::default(),
     ));
     commands
-        .spawn(WallBundle::new(WallLocation::Left, false))
-        .with_children(|p| {
-            p.spawn(WallSensorBundle {
-                sprite: SpriteBundle::default(),
-                wall_sensor: WallSensor {},
-                rigid_body: RigidBody::Static,
-                sensor: Sensor,
-                collider: Collider::cuboid(
-                    WallLocation::Left.size().x + 4.0,
-                    WallLocation::Left.size().y + 4.0,
-                ),
-            });
-        });
+        .spawn(WallBundle::new(WallLocation::Left, false));
     commands
-        .spawn(WallBundle::new(WallLocation::Right, false))
-        .with_children(|p| {
-            p.spawn(WallSensorBundle {
-                sprite: SpriteBundle::default(),
-                wall_sensor: WallSensor {},
-                rigid_body: RigidBody::Static,
-                sensor: Sensor,
-                collider: Collider::cuboid(
-                    WallLocation::Right.size().x + 4.0,
-                    WallLocation::Right.size().y + 4.0,
-                ),
-            });
-        });
+        .spawn(WallBundle::new(WallLocation::Right, false));
     commands
-        .spawn(WallBundle::new(WallLocation::Bottom, false))
-        .with_children(|p| {
-            p.spawn(WallSensorBundle {
-                sprite: SpriteBundle::default(),
-                wall_sensor: WallSensor {},
-                rigid_body: RigidBody::Static,
-                sensor: Sensor,
-                collider: Collider::cuboid(
-                    WallLocation::Bottom.size().x + 4.0,
-                    WallLocation::Bottom.size().y + 4.0,
-                ),
-            });
-        });
+        .spawn(WallBundle::new(WallLocation::Bottom, false));
     commands
-        .spawn(WallBundle::new(WallLocation::Top, true))
-        .insert(Sensor);
+        .spawn(WallBundle::new(WallLocation::Top, true));
 
     commands.spawn(paddle::PaddleBundle::new(&assets));
 
@@ -555,10 +518,7 @@ fn spawn_rocks(paddle_y: f32, mut rng: ResMut<'_, Randomizer>, commands: &mut Co
 
             let image_index = image_indices.choose(&mut rng.rng).unwrap();
             commands
-                .spawn(RockBundle::new(assets, *image_index, rock_position))
-                .with_children(|parent| {
-                    parent.spawn(RockSensorBundle::new(parent.parent_entity()));
-                });
+                .spawn(RockBundle::new(assets, *image_index, rock_position));
         }
     }
 }
@@ -572,19 +532,6 @@ struct WalkSoundStatus {
 
 #[derive(Component)]
 struct SurvivalTime(f32);
-
-
-#[derive(Component)]
-struct WallSensor {}
-
-#[derive(Bundle)]
-struct WallSensorBundle {
-    sprite: SpriteBundle,
-    wall_sensor: WallSensor,
-    sensor: Sensor,
-    rigid_body: RigidBody,
-    collider: Collider,
-}
 
 // Define the collision layers
 #[derive(PhysicsLayer)]
@@ -638,47 +585,16 @@ impl RockBundle {
                 ..default()
             },
             rock: Rock,
+            // collider: Collider::cuboid(60.0, if image_index == 1 { 18.0 } else { 25.0 }),
+            rigid_body: RigidBody::Static,
+            collision_layer: CollisionLayers::new([Layer::Rock], [Layer::Ball, Layer::Player]),
+            sleeping_disabled: SleepingDisabled,
             collider: Collider::capsule_endpoints(
                 Vec2::new(-20.0, 0.0),
                 Vec2::new(20.0, 0.0),
                 if image_index == 1 { 13.0 } else { 15.0 },
             ),
-            // collider: Collider::cuboid(60.0, if image_index == 1 { 18.0 } else { 25.0 }),
-            rigid_body: RigidBody::Static,
-            collision_layer: CollisionLayers::new([Layer::Rock], [Layer::Ball, Layer::Player]),
-            sleeping_disabled: SleepingDisabled,
-        }
-    }
-}
 
-#[derive(Component)]
-struct RockSensor {
-    target: Entity,
-}
-
-#[derive(Bundle)]
-struct RockSensorBundle {
-    sprite: SpriteBundle,
-    rock_sensor: RockSensor,
-    sensor: Sensor,
-    collision_layer: CollisionLayers,
-    rigid_body: RigidBody,
-    collider: Collider,
-}
-
-impl RockSensorBundle {
-    fn new(target: Entity) -> Self {
-        RockSensorBundle {
-            sprite: SpriteBundle::default(),
-            rock_sensor: RockSensor { target },
-            sensor: Sensor,
-            collision_layer: CollisionLayers::new([Layer::Rock], [Layer::Ball]),
-            rigid_body: RigidBody::Static,
-            collider: Collider::capsule_endpoints(
-                Vec2::new(-20.0, 0.0),
-                Vec2::new(20.0, 0.0),
-                18.0,
-            ),
         }
     }
 }
@@ -963,8 +879,7 @@ fn ball_collisions(
     collisions: Query<
         (
             Entity,
-            Option<&RockSensor>,
-            Option<&WallSensor>,
+            Option<&Rock>,
             Option<&Wall>,
             Option<&player::Player>,
             Option<&paddle::Paddle>,
@@ -978,9 +893,8 @@ fn ball_collisions(
 
         if let Some(ball) = maybe_ball {
             if let Some((
-                _,
+                target,
                 maybe_rock,
-                maybe_wall_sensor,
                 maybe_wall,
                 maybe_player,
                 maybe_paddle,
@@ -989,8 +903,8 @@ fn ball_collisions(
                 .ok()
                 .or_else(|| collisions.get(e.1).ok())
             {
-                if let Some(rock) = maybe_rock {
-                    commands.entity(rock.target).despawn_recursive();
+                if maybe_rock.is_some() {
+                    commands.entity(target).despawn_recursive();
                     play_audio(assets.break_sound.clone(), &mut commands, BREAK_SOUND_TIME);
                 }
 
@@ -1000,8 +914,6 @@ fn ball_collisions(
                     } else {
                         play_audio(assets.wall_sound.clone(), &mut commands, WALL_SOUND_TIME);
                     }
-                } else if maybe_wall_sensor.is_some() {
-                    play_audio(assets.wall_sound.clone(), &mut commands, WALL_SOUND_TIME);
                 }
 
                 if maybe_player.is_some() {
