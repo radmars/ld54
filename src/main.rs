@@ -81,6 +81,7 @@ const WALL_SOUND_TIME: f32 = 0.139;
 
 mod animation;
 mod player;
+mod paddle;
 
 #[derive(Resource)]
 struct GameOptions {
@@ -224,7 +225,6 @@ fn main() {
             spawn_ball_timer,
             kill_timed_audio,
             update_timer,
-            paddle_hack,
         )
             .run_if(in_state(GameState::Playing)),
     )
@@ -367,32 +367,10 @@ fn wait_to_start(k: Res<Input<KeyCode>>, mut next_state: ResMut<NextState<GameSt
     }
 }
 
-fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
-    commands.spawn(PaddleBundle {
-        paddle: Paddle { left: true },
-        sprite: SpriteBundle {
-            texture: assets.paddle.clone(),
-            transform: Transform::from_translation(PADDLE_START),
-            ..Default::default()
-        },
-        collider: Collider::capsule_endpoints(Vec2::new(-11.0, -8.0), Vec2::new(11.0, -8.0), 15.0),
-        rigid_body: RigidBody::Static,
-        restitution: Restitution::new(1.0).with_combine_rule(CoefficientCombine::Max),
-    });
-
-    commands.spawn(PaddleSensorBundle {
-        sprite: SpriteBundle::default(),
-        paddle_sensor: PaddleSensor {},
-        sensor: Sensor,
-        collider: Collider::capsule_endpoints(Vec2::new(-11.0, -8.0), Vec2::new(11.0, -8.0), 18.0),
-        rigid_body: RigidBody::Static,
-    });
-}
-
 fn paddle_ai(
     time: Res<Time>,
-    mut paddle_query: Query<(&mut Paddle, &mut Transform), Without<Ball>>,
-    ball_query: Query<(&Ball, &Transform, &LinearVelocity), Without<Paddle>>,
+    mut paddle_query: Query<(&mut paddle::Paddle, &mut Transform), Without<Ball>>,
+    ball_query: Query<(&Ball, &Transform, &LinearVelocity), Without<paddle::Paddle>>,
 ) {
     let Ok((mut paddle, mut paddle_transform)) = paddle_query.get_single_mut() else {
         return;
@@ -508,7 +486,7 @@ fn playing_setup(
         .spawn(WallBundle::new(WallLocation::Top, true))
         .insert(Sensor);
 
-    spawn_paddle(&mut commands, &assets);
+    commands.spawn(paddle::PaddleBundle::new(&assets));
 
     commands.spawn(player::PlayerBundle::new(&assets, &player_animations));
 
@@ -595,10 +573,6 @@ struct WalkSoundStatus {
 #[derive(Component)]
 struct SurvivalTime(f32);
 
-#[derive(Component)]
-struct Paddle {
-    left: bool,
-}
 
 #[derive(Component)]
 struct WallSensor {}
@@ -610,28 +584,6 @@ struct WallSensorBundle {
     sensor: Sensor,
     rigid_body: RigidBody,
     collider: Collider,
-}
-
-#[derive(Component)]
-struct PaddleSensor {}
-
-#[derive(Bundle)]
-struct PaddleSensorBundle {
-    sprite: SpriteBundle,
-    paddle_sensor: PaddleSensor,
-    sensor: Sensor,
-    rigid_body: RigidBody,
-    collider: Collider,
-}
-
-#[derive(Bundle)]
-struct PaddleBundle {
-    paddle: Paddle,
-    #[bundle()]
-    sprite: SpriteBundle,
-    collider: Collider,
-    rigid_body: RigidBody,
-    restitution: Restitution,
 }
 
 // Define the collision layers
@@ -809,7 +761,7 @@ fn spawn_ball_timer(
     mut rng: ResMut<Randomizer>,
     mut ball_timer: ResMut<BallSpawnTimer>,
     mut commands: Commands,
-    paddle: Query<&Transform, With<Paddle>>,
+    paddle: Query<&Transform, With<paddle::Paddle>>,
 ) {
     let Ok(paddle_xform) = paddle.get_single() else {
         return;
@@ -1015,7 +967,7 @@ fn ball_collisions(
             Option<&WallSensor>,
             Option<&Wall>,
             Option<&player::Player>,
-            Option<&PaddleSensor>,
+            Option<&paddle::Paddle>,
         ),
         With<Collider>,
     >,
@@ -1091,21 +1043,6 @@ fn play_audio(source: Handle<AudioSource>, commands: &mut Commands, length: f32)
             timer: Timer::new(Duration::from_secs_f32(length), TimerMode::Once),
         },
     });
-}
-
-fn paddle_hack(
-    mut sensor_query: Query<&mut Transform, (With<PaddleSensor>, Without<Paddle>)>,
-    paddle_query: Query<&Transform, (With<Paddle>, Without<PaddleSensor>)>,
-) {
-    let Ok(mut sensor) = sensor_query.get_single_mut() else {
-        return;
-    };
-
-    let Ok(paddle) = paddle_query.get_single() else {
-        return;
-    };
-
-    sensor.translation = paddle.translation;
 }
 
 fn update_timer(time: Res<Time>, mut text_widget: Query<(&mut Text, &mut SurvivalTime)>) {
