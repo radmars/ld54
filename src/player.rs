@@ -39,19 +39,6 @@ impl Default for PlayerAnimationTable {
     }
 }
 
-#[derive(Component)]
-pub(crate) struct PlayerSensor {}
-
-#[derive(Bundle)]
-pub(crate) struct PlayerSensorBundle {
-    sprite: SpriteBundle,
-    player_sensor: PlayerSensor,
-    sensor: Sensor,
-    collision_layer: CollisionLayers,
-    rigid_body: RigidBody,
-    collider: Collider,
-}
-
 #[derive(Component, Default)]
 pub(crate) struct Player;
 

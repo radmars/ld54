@@ -1014,7 +1014,7 @@ fn ball_collisions(
             Option<&RockSensor>,
             Option<&WallSensor>,
             Option<&Wall>,
-            Option<&player::PlayerSensor>,
+            Option<&player::Player>,
             Option<&PaddleSensor>,
         ),
         With<Collider>,
