@@ -33,7 +33,7 @@
 // I'm not sure i like this 2018 idiom. Can debate it later.
 #![allow(elided_lifetimes_in_paths)]
 
-use std::{collections::HashMap, f32::consts::PI, time::Duration};
+use std::{f32::consts::PI, time::Duration};
 
 use animation::{maybe_change_animation, AnimationIndices};
 use bevy::audio::{AudioPlugin, VolumeLevel};
@@ -41,7 +41,7 @@ use bevy::{prelude::*, sprite::Anchor, window::WindowResolution};
 use bevy_asset_loader::prelude::*;
 use bevy_xpbd_2d::prelude::*;
 use iyes_progress::prelude::*;
-use leafwing_input_manager::{axislike::VirtualAxis, prelude::*};
+use leafwing_input_manager::prelude::*;
 use rand::prelude::*;
 
 const PLAYER_X_SPEED: f32 = 220.0;
@@ -80,46 +80,24 @@ const STEP2_SOUND_TIME: f32 = 0.225;
 const WALL_SOUND_TIME: f32 = 0.139;
 
 mod animation;
-
-#[derive(Resource)]
-struct PlayerAnimationTable {
-    idle: AnimationIndices,
-    walk: AnimationIndices,
-    jump_up: AnimationIndices,
-    jump_down: AnimationIndices,
-}
-
-impl Default for PlayerAnimationTable {
-    fn default() -> Self {
-        PlayerAnimationTable {
-            idle: AnimationIndices {
-                first: 0,
-                last: 0,
-                timer: Timer::from_seconds(0.03, TimerMode::Repeating),
-            },
-            walk: AnimationIndices {
-                first: 1,
-                last: 2,
-                timer: Timer::from_seconds(0.03, TimerMode::Repeating),
-            },
-            jump_up: AnimationIndices {
-                first: 4,
-                last: 5,
-                timer: Timer::from_seconds(0.03, TimerMode::Once),
-            },
-            jump_down: AnimationIndices {
-                first: 6,
-                last: 6,
-                timer: Timer::from_seconds(0.03, TimerMode::Once),
-            },
-        }
-    }
-}
+mod player;
+mod paddle;
 
 #[derive(Resource)]
 struct GameOptions {
     debug: bool,
     skip: bool,
+}
+
+impl GameOptions {
+    #[allow(dead_code)]
+    fn insert(&mut self, key: &str, value: &str) {
+        match key {
+            "debug" => self.debug = ! value.is_empty(),
+            "skip"  => self.skip = ! value.is_empty(),
+            _ => warn!("Unknown key {}", key)
+        }
+    }
 }
 
 #[derive(States, Default, Copy, Clone, Eq, PartialEq, Debug, Hash)]
@@ -132,30 +110,39 @@ enum GameState {
     GameOver,
 }
 
-fn main() {
+#[cfg(target_arch = "wasm32")]
+fn get_browser_options(game_options: &mut GameOptions) {
     let mut options = HashMap::<String, String>::new();
-
-    if cfg!(target_arch = "wasm32") {
-        console_error_panic_hook::set_once();
-        let w = web_sys::window().expect("Couldn't find the window!");
-        let s = w.location().search().expect("No search?");
-        if let Some(text) = s.get(1..) {
-            if text.contains('&') {
-                text.split('&')
-                    .filter_map(|sub| sub.split_once('='))
-                    .for_each(|(left, right)| {
-                        options.insert(left.to_owned(), right.to_owned());
-                    });
-            } else if let Some((left, right)) = text.split_once('=') {
-                options.insert(left.to_owned(), right.to_owned());
-            }
+    console_error_panic_hook::set_once();
+    let w = web_sys::window().expect("Couldn't find the window!");
+    let s = w.location().search().expect("No search?");
+    if let Some(text) = s.get(1..) {
+        if text.contains('&') {
+            text.split('&')
+                .filter_map(|sub| sub.split_once('='))
+                .for_each(|(left, right)| {
+                    game_options.insert(left, right);
+                });
+        } else if let Some((left, right)) = text.split_once('=') {
+            game_options.insert(left, right);
         }
     }
+}
 
-    let game_options = GameOptions {
-        debug: options.contains_key("debug"),
-        skip: options.contains_key("skip"),
+fn main() {
+    let mut game_options = GameOptions {
+        debug: false,
+        skip: false,
     };
+
+    if cfg!(target_arch = "wasm32") {
+        #[cfg(target_arch = "wasm32")]
+        get_browser_options(&mut game_options);
+    }
+    else {
+        game_options.debug = true;
+        game_options.skip = true;
+    }
 
     let mut app = App::default();
 
@@ -193,7 +180,7 @@ fn main() {
     .add_loading_state(loading_state)
     .add_collection_to_loading_state::<_, LDAssets>(loading_game_state)
     .add_state::<GameState>()
-    .insert_resource(PlayerAnimationTable::default())
+    .insert_resource(player::PlayerAnimationTable::default())
     .insert_resource(Msaa::Off)
     .insert_resource(ClearColor(Color::hex("#000000").unwrap()))
     .insert_resource(Randomizer::default())
@@ -238,8 +225,6 @@ fn main() {
             spawn_ball_timer,
             kill_timed_audio,
             update_timer,
-            player_hacks,
-            paddle_hack,
         )
             .run_if(in_state(GameState::Playing)),
     )
@@ -382,32 +367,10 @@ fn wait_to_start(k: Res<Input<KeyCode>>, mut next_state: ResMut<NextState<GameSt
     }
 }
 
-fn spawn_paddle(commands: &mut Commands, assets: &Res<LDAssets>) {
-    commands.spawn(PaddleBundle {
-        paddle: Paddle { left: true },
-        sprite: SpriteBundle {
-            texture: assets.paddle.clone(),
-            transform: Transform::from_translation(PADDLE_START),
-            ..Default::default()
-        },
-        collider: Collider::capsule_endpoints(Vec2::new(-11.0, -8.0), Vec2::new(11.0, -8.0), 15.0),
-        rigid_body: RigidBody::Static,
-        restitution: Restitution::new(1.0).with_combine_rule(CoefficientCombine::Max),
-    });
-
-    commands.spawn(PaddleSensorBundle {
-        sprite: SpriteBundle::default(),
-        paddle_sensor: PaddleSensor {},
-        sensor: Sensor,
-        collider: Collider::capsule_endpoints(Vec2::new(-11.0, -8.0), Vec2::new(11.0, -8.0), 18.0),
-        rigid_body: RigidBody::Static,
-    });
-}
-
 fn paddle_ai(
     time: Res<Time>,
-    mut paddle_query: Query<(&mut Paddle, &mut Transform), Without<Ball>>,
-    ball_query: Query<(&Ball, &Transform, &LinearVelocity), Without<Paddle>>,
+    mut paddle_query: Query<(&mut paddle::Paddle, &mut Transform), Without<Ball>>,
+    ball_query: Query<(&Ball, &Transform, &LinearVelocity), Without<paddle::Paddle>>,
 ) {
     let Ok((mut paddle, mut paddle_transform)) = paddle_query.get_single_mut() else {
         return;
@@ -459,7 +422,7 @@ fn playing_setup(
     assets: Res<LDAssets>,
     mut rng: ResMut<Randomizer>,
     mut commands: Commands,
-    player_animations: Res<PlayerAnimationTable>,
+    player_animations: Res<player::PlayerAnimationTable>,
 ) {
     let paddle_y = TOP_WALL - GAP_BETWEEN_PADDLE_AND_TOP - PADDLE_SIZE.y;
     commands.spawn(SpriteBundle {
@@ -478,99 +441,44 @@ fn playing_setup(
         SpriteBundle::default(),
     ));
     commands
-        .spawn(WallBundle::new(WallLocation::Left, false))
-        .with_children(|p| {
-            p.spawn(WallSensorBundle {
-                sprite: SpriteBundle::default(),
-                wall_sensor: WallSensor {},
-                rigid_body: RigidBody::Static,
-                sensor: Sensor,
-                collider: Collider::cuboid(
-                    WallLocation::Left.size().x + 4.0,
-                    WallLocation::Left.size().y + 4.0,
-                ),
-            });
-        });
+        .spawn(WallBundle::new(WallLocation::Left, false));
     commands
-        .spawn(WallBundle::new(WallLocation::Right, false))
-        .with_children(|p| {
-            p.spawn(WallSensorBundle {
-                sprite: SpriteBundle::default(),
-                wall_sensor: WallSensor {},
-                rigid_body: RigidBody::Static,
-                sensor: Sensor,
-                collider: Collider::cuboid(
-                    WallLocation::Right.size().x + 4.0,
-                    WallLocation::Right.size().y + 4.0,
-                ),
-            });
-        });
+        .spawn(WallBundle::new(WallLocation::Right, false));
     commands
-        .spawn(WallBundle::new(WallLocation::Bottom, false))
-        .with_children(|p| {
-            p.spawn(WallSensorBundle {
-                sprite: SpriteBundle::default(),
-                wall_sensor: WallSensor {},
-                rigid_body: RigidBody::Static,
-                sensor: Sensor,
-                collider: Collider::cuboid(
-                    WallLocation::Bottom.size().x + 4.0,
-                    WallLocation::Bottom.size().y + 4.0,
-                ),
-            });
-        });
+        .spawn(WallBundle::new(WallLocation::Bottom, false));
     commands
-        .spawn(WallBundle::new(WallLocation::Top, true))
-        .insert(Sensor);
+        .spawn(WallBundle::new(WallLocation::Top, true));
 
-    spawn_paddle(&mut commands, &assets);
+    commands.spawn(paddle::PaddleBundle::new(&assets));
 
-    let idle_player = player_animations.idle.clone();
-
-    let pb = PlayerBundle {
-        sprite: SpriteSheetBundle {
-            texture_atlas: assets.player.clone(),
-            sprite: TextureAtlasSprite {
-                index: idle_player.first,
-                anchor: Anchor::Custom(Vec2::new(-0.1, -0.2)),
-                ..default()
-            },
-            transform: Transform::from_translation(Vec3::new(0.0, 100.0, 1.0)),
-            ..default()
-        },
-        input_manager: InputManagerBundle::<Action> {
-            input_map: player_input_map(),
-            ..default()
-        },
-        animation_indices: idle_player,
-        player: Player,
-        rigid_body: RigidBody::Dynamic,
-        collider: Collider::capsule_endpoints(Vec2::new(-5.0, 0.0), Vec2::new(10.0, 0.0), 21.0),
-        external_force: ExternalForce::ZERO,
-        locked_axes: LockedAxes::new().lock_rotation(),
-        gravity_scale: GravityScale(1.0),
-        collision_layer: CollisionLayers::new(
-            [Layer::Player],
-            [Layer::Rock, Layer::Wall, Layer::Paddle, Layer::Ball],
-        ),
-        restitution: Restitution::PERFECTLY_INELASTIC.with_combine_rule(CoefficientCombine::Min),
-        sleeping_disabled: SleepingDisabled,
-    };
-    commands.spawn(pb);
-    commands.spawn(PlayerSensorBundle {
-        sprite: SpriteBundle::default(),
-        player_sensor: PlayerSensor {},
-        sensor: Sensor,
-        collision_layer: CollisionLayers::new(
-            [Layer::Player],
-            [Layer::Rock, Layer::Wall, Layer::Paddle, Layer::Ball],
-        ),
-        rigid_body: RigidBody::Kinematic,
-        collider: Collider::capsule_endpoints(Vec2::new(-5.0, 0.0), Vec2::new(10.0, 0.0), 28.0),
-    });
+    commands.spawn(player::PlayerBundle::new(&assets, &player_animations));
 
     commands.spawn(BallBundle::new(&assets, &mut rng, PADDLE_START));
 
+    spawn_rocks(paddle_y, rng, &mut commands, &assets);
+
+    let text_style = TextStyle {
+        font: assets.font.clone(),
+        font_size: 30.0,
+        color: Color::WHITE,
+    };
+    commands.spawn((
+        TextBundle::from_sections([
+            TextSection::new("Gods' wrath endured for: ", text_style.clone()),
+            TextSection::from_style(text_style.clone()),
+        ])
+        .with_text_alignment(TextAlignment::Left)
+        .with_style(Style {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(5.0),
+            left: Val::Px(5.0),
+            ..default()
+        }),
+        SurvivalTime(0.0),
+    ));
+}
+
+fn spawn_rocks(paddle_y: f32, mut rng: ResMut<'_, Randomizer>, commands: &mut Commands<'_, '_>, assets: &Res<'_, LDAssets>) {
     // Spawn as many rocks as we can given the boundaries defined by the constants
     let total_width_of_rocks = (RIGHT_WALL - LEFT_WALL) - 2. * GAP_BETWEEN_ROCKS_AND_SIDES;
     let top_edge_of_rocks = paddle_y - GAP_BETWEEN_ROCKS_AND_PADDLE;
@@ -610,67 +518,11 @@ fn playing_setup(
 
             let image_index = image_indices.choose(&mut rng.rng).unwrap();
             commands
-                .spawn(RockBundle::new(&assets, *image_index, rock_position))
-                .with_children(|parent| {
-                    parent.spawn(RockSensorBundle::new(parent.parent_entity()));
-                });
+                .spawn(RockBundle::new(assets, *image_index, rock_position));
         }
     }
-
-    let text_style = TextStyle {
-        font: assets.font.clone(),
-        font_size: 30.0,
-        color: Color::WHITE,
-    };
-    commands.spawn((
-        TextBundle::from_sections([
-            TextSection::new("Gods' wrath endured for: ", text_style.clone()),
-            TextSection::from_style(text_style.clone()),
-        ])
-        .with_text_alignment(TextAlignment::Left)
-        .with_style(Style {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(5.0),
-            left: Val::Px(5.0),
-            ..default()
-        }),
-        SurvivalTime(0.0),
-    ));
 }
 
-#[derive(Component)]
-struct PlayerSensor {}
-
-#[derive(Bundle)]
-struct PlayerSensorBundle {
-    sprite: SpriteBundle,
-    player_sensor: PlayerSensor,
-    sensor: Sensor,
-    collision_layer: CollisionLayers,
-    rigid_body: RigidBody,
-    collider: Collider,
-}
-
-#[derive(Component, Default)]
-struct Player;
-
-#[derive(Bundle)]
-struct PlayerBundle {
-    player: Player,
-    #[bundle()]
-    input_manager: InputManagerBundle<Action>,
-    #[bundle()]
-    sprite: SpriteSheetBundle,
-    animation_indices: AnimationIndices,
-    collider: Collider,
-    rigid_body: RigidBody,
-    external_force: ExternalForce,
-    locked_axes: LockedAxes,
-    gravity_scale: GravityScale,
-    collision_layer: CollisionLayers,
-    restitution: Restitution,
-    sleeping_disabled: SleepingDisabled,
-}
 
 #[derive(Resource)]
 struct WalkSoundStatus {
@@ -680,45 +532,6 @@ struct WalkSoundStatus {
 
 #[derive(Component)]
 struct SurvivalTime(f32);
-
-#[derive(Component)]
-struct Paddle {
-    left: bool,
-}
-
-#[derive(Component)]
-struct WallSensor {}
-
-#[derive(Bundle)]
-struct WallSensorBundle {
-    sprite: SpriteBundle,
-    wall_sensor: WallSensor,
-    sensor: Sensor,
-    rigid_body: RigidBody,
-    collider: Collider,
-}
-
-#[derive(Component)]
-struct PaddleSensor {}
-
-#[derive(Bundle)]
-struct PaddleSensorBundle {
-    sprite: SpriteBundle,
-    paddle_sensor: PaddleSensor,
-    sensor: Sensor,
-    rigid_body: RigidBody,
-    collider: Collider,
-}
-
-#[derive(Bundle)]
-struct PaddleBundle {
-    paddle: Paddle,
-    #[bundle()]
-    sprite: SpriteBundle,
-    collider: Collider,
-    rigid_body: RigidBody,
-    restitution: Restitution,
-}
 
 // Define the collision layers
 #[derive(PhysicsLayer)]
@@ -772,47 +585,16 @@ impl RockBundle {
                 ..default()
             },
             rock: Rock,
+            // collider: Collider::cuboid(60.0, if image_index == 1 { 18.0 } else { 25.0 }),
+            rigid_body: RigidBody::Static,
+            collision_layer: CollisionLayers::new([Layer::Rock], [Layer::Ball, Layer::Player]),
+            sleeping_disabled: SleepingDisabled,
             collider: Collider::capsule_endpoints(
                 Vec2::new(-20.0, 0.0),
                 Vec2::new(20.0, 0.0),
                 if image_index == 1 { 13.0 } else { 15.0 },
             ),
-            // collider: Collider::cuboid(60.0, if image_index == 1 { 18.0 } else { 25.0 }),
-            rigid_body: RigidBody::Static,
-            collision_layer: CollisionLayers::new([Layer::Rock], [Layer::Ball, Layer::Player]),
-            sleeping_disabled: SleepingDisabled,
-        }
-    }
-}
 
-#[derive(Component)]
-struct RockSensor {
-    target: Entity,
-}
-
-#[derive(Bundle)]
-struct RockSensorBundle {
-    sprite: SpriteBundle,
-    rock_sensor: RockSensor,
-    sensor: Sensor,
-    collision_layer: CollisionLayers,
-    rigid_body: RigidBody,
-    collider: Collider,
-}
-
-impl RockSensorBundle {
-    fn new(target: Entity) -> Self {
-        RockSensorBundle {
-            sprite: SpriteBundle::default(),
-            rock_sensor: RockSensor { target },
-            sensor: Sensor,
-            collision_layer: CollisionLayers::new([Layer::Rock], [Layer::Ball]),
-            rigid_body: RigidBody::Static,
-            collider: Collider::capsule_endpoints(
-                Vec2::new(-20.0, 0.0),
-                Vec2::new(20.0, 0.0),
-                18.0,
-            ),
         }
     }
 }
@@ -895,7 +677,7 @@ fn spawn_ball_timer(
     mut rng: ResMut<Randomizer>,
     mut ball_timer: ResMut<BallSpawnTimer>,
     mut commands: Commands,
-    paddle: Query<&Transform, With<Paddle>>,
+    paddle: Query<&Transform, With<paddle::Paddle>>,
 ) {
     let Ok(paddle_xform) = paddle.get_single() else {
         return;
@@ -995,29 +777,9 @@ enum Action {
     Jump,
 }
 
-fn player_input_map() -> InputMap<Action> {
-    let mut input_map = InputMap::default();
-    input_map.insert(
-        UserInput::VirtualAxis(VirtualAxis {
-            negative: KeyCode::Left.into(),
-            positive: KeyCode::Right.into(),
-        }),
-        Action::Move,
-    );
-    input_map.insert(
-        UserInput::VirtualAxis(VirtualAxis {
-            negative: GamepadButtonType::DPadLeft.into(),
-            positive: GamepadButtonType::DPadRight.into(),
-        }),
-        Action::Move,
-    );
-    input_map.insert(KeyCode::Up, Action::Jump);
-    input_map.insert(GamepadButtonType::South, Action::Jump);
-    input_map
-}
 
 fn player_inputs(
-    mut player_query: Query<(&mut LinearVelocity, &ActionState<Action>), With<Player>>,
+    mut player_query: Query<(&mut LinearVelocity, &ActionState<Action>), With<player::Player>>,
     mut commands: Commands,
     assets: Res<LDAssets>,
     mut walk_sound_status: ResMut<WalkSoundStatus>,
@@ -1056,7 +818,7 @@ fn player_inputs(
 }
 
 fn check_for_gg(
-    player_xform: Query<&Transform, With<Player>>,
+    player_xform: Query<&Transform, With<player::Player>>,
     mut next_state: ResMut<NextState<GameState>>,
     mut commands: Commands,
     assets: Res<LDAssets>,
@@ -1082,9 +844,9 @@ pub(crate) fn player_animation(
             &mut TextureAtlasSprite,
             &mut AnimationIndices,
         ),
-        With<Player>,
+        With<player::Player>,
     >,
-    player_animations: Res<PlayerAnimationTable>,
+    player_animations: Res<player::PlayerAnimationTable>,
 ) {
     let Ok((velocity, mut atlas, mut animation)) = player_query.get_single_mut() else {
         return;
@@ -1117,11 +879,10 @@ fn ball_collisions(
     collisions: Query<
         (
             Entity,
-            Option<&RockSensor>,
-            Option<&WallSensor>,
+            Option<&Rock>,
             Option<&Wall>,
-            Option<&PlayerSensor>,
-            Option<&PaddleSensor>,
+            Option<&player::Player>,
+            Option<&paddle::Paddle>,
         ),
         With<Collider>,
     >,
@@ -1132,9 +893,8 @@ fn ball_collisions(
 
         if let Some(ball) = maybe_ball {
             if let Some((
-                _,
+                target,
                 maybe_rock,
-                maybe_wall_sensor,
                 maybe_wall,
                 maybe_player,
                 maybe_paddle,
@@ -1143,24 +903,20 @@ fn ball_collisions(
                 .ok()
                 .or_else(|| collisions.get(e.1).ok())
             {
-                if let Some(rock) = maybe_rock {
-                    commands.entity(rock.target).despawn_recursive();
+                if maybe_rock.is_some() {
+                    commands.entity(target).despawn_recursive();
                     play_audio(assets.break_sound.clone(), &mut commands, BREAK_SOUND_TIME);
                 }
 
                 if let Some(wall) = maybe_wall {
-                    info!("Wll");
                     if wall.ball_destroyer {
                         commands.entity(ball).despawn_recursive();
                     } else {
                         play_audio(assets.wall_sound.clone(), &mut commands, WALL_SOUND_TIME);
                     }
-                } else if maybe_wall_sensor.is_some() {
-                    info!("Sensor");
-                    play_audio(assets.wall_sound.clone(), &mut commands, WALL_SOUND_TIME);
                 }
 
-                if let Some(_) = maybe_player {
+                if maybe_player.is_some() {
                     let i = rng.rng.gen_range(0..2);
                     if i == 1 {
                         play_audio(assets.ball_sound.clone(), &mut commands, BALL_SOUND_TIME);
@@ -1192,7 +948,7 @@ fn kill_timed_audio(
 fn play_audio(source: Handle<AudioSource>, commands: &mut Commands, length: f32) {
     commands.spawn(TimedAudioBundle {
         audio_bundle: AudioBundle {
-            source: source,
+            source,
             ..default()
         },
         timed_audio: TimedAudio {
@@ -1201,35 +957,6 @@ fn play_audio(source: Handle<AudioSource>, commands: &mut Commands, length: f32)
     });
 }
 
-fn paddle_hack(
-    mut sensor_query: Query<&mut Transform, (With<PaddleSensor>, Without<Paddle>)>,
-    paddle_query: Query<&Transform, (With<Paddle>, Without<PaddleSensor>)>,
-) {
-    let Ok(mut sensor) = sensor_query.get_single_mut() else {
-        return;
-    };
-
-    let Ok(paddle) = paddle_query.get_single() else {
-        return;
-    };
-
-    sensor.translation = paddle.translation;
-}
-
-fn player_hacks(
-    mut sensor_query: Query<&mut Transform, (With<PlayerSensor>, Without<Player>)>,
-    player_query: Query<&Transform, (With<Player>, Without<PlayerSensor>)>,
-) {
-    let Ok(mut sensor) = sensor_query.get_single_mut() else {
-        return;
-    };
-
-    let Ok(player) = player_query.get_single() else {
-        return;
-    };
-
-    sensor.translation = player.translation;
-}
 fn update_timer(time: Res<Time>, mut text_widget: Query<(&mut Text, &mut SurvivalTime)>) {
     let Ok((mut text, mut survival_time)) = text_widget.get_single_mut() else {
         return;
